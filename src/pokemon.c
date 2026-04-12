@@ -513,6 +513,7 @@ static const u16 sSpeciesToHoennPokedexNum[NUM_SPECIES - 1] =
     SPECIES_TO_HOENN(JIRACHI),
     SPECIES_TO_HOENN(DEOXYS),
     SPECIES_TO_HOENN(CHIMECHO),
+#include "constants/generated/reserved_pokedex_hoenn.inc"
 };
 
  // Assigns all species to the National Dex Index (Summary No. for National Dex)
@@ -929,6 +930,7 @@ static const u16 sSpeciesToNationalPokedexNum[NUM_SPECIES - 1] =
     SPECIES_TO_NATIONAL(JIRACHI),
     SPECIES_TO_NATIONAL(DEOXYS),
     SPECIES_TO_NATIONAL(CHIMECHO),
+#include "constants/generated/reserved_pokedex_national.inc"
 };
 
 // Assigns all Hoenn Dex Indexes to a National Dex Index

@@ -76,7 +76,9 @@ INCLUDE_CPP_ARGS := $(INCLUDE_DIRS:%=-iquote %)
 INCLUDE_SCANINC_ARGS := $(INCLUDE_DIRS:%=-I %)
 
 O_LEVEL ?= 2
-CPPFLAGS := $(INCLUDE_CPP_ARGS) -Wno-trigraphs -D$(GAME_VERSION) -DREVISION=$(GAME_REVISION) -D$(GAME_LANGUAGE) -DMODERN=$(MODERN)
+NUM_RESERVED_CUSTOM_SPECIES ?= 16
+
+CPPFLAGS := $(INCLUDE_CPP_ARGS) -Wno-trigraphs -D$(GAME_VERSION) -DREVISION=$(GAME_REVISION) -D$(GAME_LANGUAGE) -DMODERN=$(MODERN) -DNUM_RESERVED_CUSTOM_SPECIES=$(NUM_RESERVED_CUSTOM_SPECIES)
 ifeq ($(MODERN),0)
   CPPFLAGS += -I tools/agbcc/include -I tools/agbcc -nostdinc -undef -std=gnu89
   CC1 := tools/agbcc/bin/agbcc$(EXE)
@@ -195,6 +197,18 @@ OBJS_REL := $(patsubst $(OBJ_DIR)/%,%,$(OBJS))
 SUBDIRS  := $(sort $(dir $(OBJS)))
 $(shell mkdir -p $(SUBDIRS))
 
+# Reserved species placeholder tables (must match NUM_RESERVED_CUSTOM_SPECIES / -DNUM_RESERVED_CUSTOM_SPECIES).
+GEN_RESERVED_SENTINEL := include/constants/generated/.reserved_species_sentinel
+$(GEN_RESERVED_SENTINEL): Makefile tools/gen_reserved_species_tables.py include/constants/reserved_species_config.h
+	@mkdir -p include/constants/generated
+	@python3 tools/gen_reserved_species_tables.py $(NUM_RESERVED_CUSTOM_SPECIES)
+	@SIG=`python3 -c "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path('tools/gen_reserved_species_tables.py').read_bytes()).hexdigest())"`; \
+	echo "$(NUM_RESERVED_CUSTOM_SPECIES) $$SIG" > $(GEN_RESERVED_SENTINEL).tmp; \
+	if ! cmp -s $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL) 2>/dev/null; then mv $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL); else $(RM) $(GEN_RESERVED_SENTINEL).tmp; fi
+
+# Ensure tables exist before compiling any translation unit that includes them.
+$(C_OBJS): $(GEN_RESERVED_SENTINEL)
+
 # Pretend rules that are actually flags defer to `make all`
 modern: all
 compare: all
@@ -220,6 +234,7 @@ clean-assets:
 tidy:
 	$(RM) $(ALL_BUILDS:%=poke%{.gba,.elf,.map})
 	$(RM) -r $(BUILD_DIR)
+	$(RM) -r include/constants/generated
 
 # "friendly" target names for convenience sake
 firered:                ; @$(MAKE) GAME_VERSION=FIRERED
@@ -367,9 +382,9 @@ endif
 
 # Elf from object files
 LDFLAGS = -Map ../../$(MAP)
-$(ELF): $(LD_SCRIPT) $(LD_SCRIPT_DEPS) $(OBJS)
-	@cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ../../$< --print-memory-usage -o ../../$@ $(OBJS_REL) $(LIB) | cat
-	@echo "cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ../../$< --print-memory-usage -o ../../$@ <objs> <libs> | cat"
+$(ELF): $(LD_SCRIPT) $(LD_SCRIPT_DEPS) $(OBJS) $(GEN_RESERVED_SENTINEL)
+	@cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ../../$(LD_SCRIPT) --print-memory-usage -o ../../$@ $(OBJS_REL) $(LIB) | cat
+	@echo "cd $(OBJ_DIR) && $(LD) $(LDFLAGS) -T ../../$(LD_SCRIPT) --print-memory-usage -o ../../$@ <objs> <libs> | cat"
 	$(FIX) $@ -t"$(TITLE)" -c$(GAME_CODE) -m$(MAKER_CODE) -r$(GAME_REVISION) --silent
 
 # Builds the rom from the elf file

@@ -9385,4 +9385,5 @@ static const u32 sTMHMLearnsets[][2] =
                                         | TMHM(TM49_SNATCH)
                                         | TMHM(HM05_FLASH)),
 
+#include "constants/generated/reserved_tmhm.inc"
 };

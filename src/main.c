@@ -15,6 +15,7 @@
 #include "scanline_effect.h"
 #include "save_failed_screen.h"
 #include "quest_log.h"
+#include "reserved_species.h"
 
 extern u32 intr_main[];
 
@@ -133,6 +134,7 @@ void AgbMain()
     ClearDma3Requests();
     ResetBgs();
     InitHeap(gHeap, HEAP_SIZE);
+    ReservedSpecies_InitScriptMailbox();
     SetDefaultFontsPointer();
 
     gSoftResetDisabled = FALSE;

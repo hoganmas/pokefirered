@@ -2060,6 +2060,7 @@ const struct MonCoords gMonFrontPicCoords[] =
         .size = MON_COORDS_SIZE(24, 56),
         .y_offset = 6,
     },
+#include "constants/generated/reserved_front_coords.inc"
     [SPECIES_EGG] =
     {
         .size = MON_COORDS_SIZE(24, 24),

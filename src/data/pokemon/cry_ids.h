@@ -137,4 +137,5 @@ static const u16 sHoennSpeciesIdToCryId[] =
     [SPECIES_JIRACHI - HOENN_MON_SPECIES_START] = CRY_JIRACHI,
     [SPECIES_DEOXYS - HOENN_MON_SPECIES_START] = CRY_DEOXYS,
     [SPECIES_CHIMECHO - HOENN_MON_SPECIES_START] = CRY_CHIMECHO,
+#include "constants/generated/reserved_cry_ids.inc"
 };

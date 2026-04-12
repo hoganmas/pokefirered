@@ -1,6 +1,8 @@
 #ifndef GUARD_CONSTANTS_SPECIES_H
 #define GUARD_CONSTANTS_SPECIES_H
 
+#include "constants/reserved_species_config.h"
+
 #define SPECIES_NONE 0
 #define SPECIES_BULBASAUR 1
 #define SPECIES_IVYSAUR 2
@@ -418,7 +420,8 @@
 #define SPECIES_JIRACHI 409
 #define SPECIES_DEOXYS 410
 #define SPECIES_CHIMECHO 411
-#define SPECIES_EGG 412
+// Placeholder species IDs for external ROM patching / tooling (see tools/gen_reserved_species_tables.py).
+#define SPECIES_EGG (SPECIES_CHIMECHO + 1 + NUM_RESERVED_CUSTOM_SPECIES)
 
 #define NUM_SPECIES SPECIES_EGG
 

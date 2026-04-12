@@ -11254,4 +11254,6 @@ const struct SpeciesInfo gSpeciesInfo[] =
         .bodyColor = BODY_COLOR_BLUE,
         .noFlip = FALSE,
     },
+#include "constants/generated/reserved_species_info.inc"
+    [SPECIES_EGG] = {0},
 };

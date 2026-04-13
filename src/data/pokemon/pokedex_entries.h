@@ -5030,4 +5030,7 @@ const struct PokedexEntry gPokedexEntries[] =
         .trainerScale = 337,
         .trainerOffset = 2,
     },
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_entries.inc"
+#endif
 };

@@ -1,14 +1,61 @@
-#!/usr/bin/env lua
+-- (Note) mGBA Lua doesn't support shebang lines; keep this file pure Lua.
 -- Unit tests for reserved_species_mailbox.lua (no mGBA; pure Lua 5.3+).
 -- Run from repo root: make test-mailbox-lua
 -- Optional arg[1] = repo root path if cwd is not the project root.
 
-local root = (arg[1] and #arg[1] > 0) and arg[1] or "."
-local chunk, err = loadfile(root .. "/tools/mgba_scripts/reserved_species_mailbox.lua")
+local function log(msg)
+    if console and console.log then
+        console:log(msg)
+    else
+        print(msg)
+    end
+end
+
+local function dirname(path)
+    return (path:gsub("[/\\][^/\\]*$", ""))
+end
+
+local function scriptDir()
+    local info = debug.getinfo(1, "S")
+    if not info or not info.source then
+        return nil
+    end
+    if info.source:sub(1, 1) ~= "@" then
+        return nil
+    end
+    local path = info.source:sub(2)
+    return dirname(path)
+end
+
+local argv = rawget(_G, "arg") or {}
+local root = (argv[1] and #argv[1] > 0) and argv[1] or "."
+local thisDir = scriptDir()
+log(string.format("DBG: loading mailbox_logic_test.lua (root=%s dir=%s)", tostring(root), tostring(thisDir)))
+
+local candidates = {}
+if thisDir then
+    candidates[#candidates + 1] = thisDir .. "/reserved_species_mailbox.lua"
+end
+candidates[#candidates + 1] = root .. "/tools/mgba_scripts/reserved_species_mailbox.lua"
+
+local chunk, err, loadedPath = nil, nil, nil
+for _, path in ipairs(candidates) do
+    chunk, err = loadfile(path)
+    if chunk then
+        loadedPath = path
+        break
+    end
+end
+
 if not chunk then
-    io.stderr:write(err, "\n")
+    io.stderr:write("Failed to load reserved_species_mailbox.lua. Tried:\n")
+    for _, path in ipairs(candidates) do
+        io.stderr:write("  - ", path, "\n")
+    end
+    io.stderr:write(err or "unknown loadfile error", "\n")
     os.exit(1)
 end
+log("DBG: loaded reserved_species_mailbox.lua from " .. tostring(loadedPath) .. "; running tests")
 chunk()
 local M = assert(ReservedSpeciesMailbox)
 
@@ -23,8 +70,9 @@ local function assertEq(a, b, msg)
     end
 end
 
---- Minimal emu shim: word-aligned read32/read16 over a sparse int table.
-local function makeEmu(mem32)
+--- Minimal emu shim: word-aligned read32/read16 over sparse int table + optional byte writes.
+local function makeEmu(mem32, mem8)
+    mem8 = mem8 or {}
     return {
         read32 = function(_, a)
             assert(a % 4 == 0, "unaligned read32")
@@ -37,6 +85,13 @@ local function makeEmu(mem32)
                 return w % 65536
             end
             return math.floor(w / 65536) % 65536
+        end,
+        write8 = function(_, a, v)
+            mem8[a] = v % 256
+        end,
+        write32 = function(_, a, v)
+            assert(a % 4 == 0, "unaligned write32")
+            mem32[a] = v
         end,
     }
 end
@@ -113,6 +168,37 @@ end
 
 do
     assertEq(M.speciesInfoRowPtrFromBase(0x08000000, 5, 28), 0x08000000 + 5 * 28, "speciesInfoRowPtrFromBase")
+end
+
+do
+    local mem = {}
+    local mem8 = {}
+    local base = 0x6000
+    local speciesNames = 0x08030000
+    local target = 412
+    placeMailbox(mem, base, {
+        version = M.VERSION,
+        count = 4,
+        speciesInfo = 0x08000000,
+        levelUpLearnsets = 0x08010000,
+        speciesNames = speciesNames,
+        sizeofSpeciesInfo = 28,
+        targetSpecies = target,
+        speciesInfoRowPtr = 0x08000000 + target * 28,
+        levelUpLearnsetEntryAddr = 0x08020000 + target * 4,
+    })
+    local emu = makeEmu(mem, mem8)
+    local name = "LUAUNQ42"
+    local writeAddr = M.writeReservedSpeciesName(emu, base, 0, name)
+    local expectedAddr = speciesNames + target * M.SPECIES_NAME_STRIDE
+    assertEq(writeAddr, expectedAddr, "writeReservedSpeciesName addr")
+    local expected = { 0xC6, 0xCF, 0xBB, 0xCF, 0xC8, 0xCB, 0xA5, 0xA3 }
+    for i = 1, #expected do
+        assertEq(mem8[writeAddr + (i - 1)], expected[i], "encoded name byte " .. i)
+    end
+    for i = #expected + 1, M.POKEMON_NAME_LENGTH + 1 do
+        assertEq(mem8[writeAddr + (i - 1)], 0xFF, "EOS fill byte " .. i)
+    end
 end
 
 print("OK: mailbox_logic_test (all assertions passed)")

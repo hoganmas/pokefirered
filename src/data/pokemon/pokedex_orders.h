@@ -411,7 +411,10 @@ const u16 gPokedexOrder_Alphabetical[] =
     NATIONAL_DEX_ZANGOOSE,
     NATIONAL_DEX_ZAPDOS,
     NATIONAL_DEX_ZIGZAGOON,
-    NATIONAL_DEX_ZUBAT
+    NATIONAL_DEX_ZUBAT,
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_order_alphabetical_append.inc"
+#endif
 };
 
 const u16 gPokedexOrder_Weight[] =
@@ -801,7 +804,10 @@ const u16 gPokedexOrder_Weight[] =
     NATIONAL_DEX_STEELIX,
     NATIONAL_DEX_SNORLAX,
     NATIONAL_DEX_METAGROSS,
-    NATIONAL_DEX_GROUDON
+    NATIONAL_DEX_GROUDON,
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_order_weight_append.inc"
+#endif
 };
 
 const u16 gPokedexOrder_Height[] =
@@ -1191,7 +1197,10 @@ const u16 gPokedexOrder_Height[] =
     NATIONAL_DEX_RAYQUAZA,
     NATIONAL_DEX_ONIX,
     NATIONAL_DEX_STEELIX,
-    NATIONAL_DEX_WAILORD
+    NATIONAL_DEX_WAILORD,
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_order_height_append.inc"
+#endif
 };
 
 const u16 gPokedexOrder_Type[] =
@@ -1606,5 +1615,8 @@ const u16 gPokedexOrder_Type[] =
     SPECIES_SABLEYE,
     SPECIES_HOUNDOUR,
     SPECIES_HOUNDOOM,
-    SPECIES_SNEASEL
+    SPECIES_SNEASEL,
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_order_type_append.inc"
+#endif
 };

@@ -32,6 +32,7 @@
 #include "new_menu_helpers.h"
 #include "overworld.h"
 #include "play_time.h"
+#include "pokedex.h"
 #include "quest_log.h"
 #include "quest_log_objects.h"
 #include "random.h"
@@ -48,10 +49,14 @@
 #include "vs_seeker.h"
 #include "wild_encounter.h"
 #include "constants/cable_club.h"
+#include "constants/items.h"
 #include "constants/event_objects.h"
+#include "constants/flags.h"
 #include "constants/maps.h"
+#include "constants/pokedex.h"
 #include "constants/region_map_sections.h"
 #include "constants/songs.h"
+#include "constants/species.h"
 #include "constants/sound.h"
 
 #define PLAYER_LINK_STATE_IDLE 0x80
@@ -1518,6 +1523,18 @@ void CB2_NewGame(void)
     StopMapMusic();
     ResetSafariZoneFlag_();
     NewGameInitData();
+#ifdef DEBUG_GIVE_RESERVED_SPECIES_NEWGAME
+    FlagSet(FLAG_SYS_POKEMON_GET);
+    FlagSet(FLAG_SYS_POKEDEX_GET);
+    // Ensure StartMenuPokedexSanityCheck passes immediately in debug New Game flow.
+    {
+        u16 nd = SpeciesToNationalPokedexNum(SPECIES_CHIMECHO + 1);
+
+        GetSetPokedexFlag(nd, FLAG_SET_SEEN);
+        GetSetPokedexFlag(nd, FLAG_SET_CAUGHT);
+    }
+    ScriptGiveMon(SPECIES_CHIMECHO + 1, 5, ITEM_NONE, 0, 0, 0);
+#endif
     ResetInitialPlayerAvatarState();
     PlayTimeCounter_Start();
     ScriptContext_Init();

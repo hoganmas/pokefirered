@@ -79,6 +79,10 @@ O_LEVEL ?= 2
 NUM_RESERVED_CUSTOM_SPECIES ?= 16
 
 CPPFLAGS := $(INCLUDE_CPP_ARGS) -Wno-trigraphs -D$(GAME_VERSION) -DREVISION=$(GAME_REVISION) -D$(GAME_LANGUAGE) -DMODERN=$(MODERN) -DNUM_RESERVED_CUSTOM_SPECIES=$(NUM_RESERVED_CUSTOM_SPECIES)
+# After Oak, add first reserved species to party: make firered DEBUG_GIVE_RESERVED_SPECIES_NEWGAME=1
+ifeq ($(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME),1)
+CPPFLAGS += -DDEBUG_GIVE_RESERVED_SPECIES_NEWGAME
+endif
 ifeq ($(MODERN),0)
   CPPFLAGS += -I tools/agbcc/include -I tools/agbcc -nostdinc -undef -std=gnu89
   CC1 := tools/agbcc/bin/agbcc$(EXE)
@@ -199,11 +203,22 @@ $(shell mkdir -p $(SUBDIRS))
 
 # Reserved species placeholder tables (must match NUM_RESERVED_CUSTOM_SPECIES / -DNUM_RESERVED_CUSTOM_SPECIES).
 GEN_RESERVED_SENTINEL := include/constants/generated/.reserved_species_sentinel
-$(GEN_RESERVED_SENTINEL): Makefile tools/gen_reserved_species_tables.py include/constants/reserved_species_config.h
+RESERVED_GEN_BUILD_OPTS := include/constants/generated/reserved_species_build.opts
+
+.PHONY: reserved_gen_build_opts_phony
+reserved_gen_build_opts_phony:
+
+# Changing DEBUG_GIVE_RESERVED_SPECIES_NEWGAME must re-run the generator (slot0 dex/graphics alias).
+$(RESERVED_GEN_BUILD_OPTS): Makefile reserved_gen_build_opts_phony
 	@mkdir -p include/constants/generated
-	@python3 tools/gen_reserved_species_tables.py $(NUM_RESERVED_CUSTOM_SPECIES)
+	@echo "DEBUG_GIVE_RESERVED_SPECIES_NEWGAME=$(strip $(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME))" > $@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else $(RM) $@.tmp; fi
+
+$(GEN_RESERVED_SENTINEL): Makefile tools/gen_reserved_species_tables.py include/constants/reserved_species_config.h $(RESERVED_GEN_BUILD_OPTS)
+	@mkdir -p include/constants/generated
+	@sh -c 'if [ "$(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME)" = 1 ]; then export RESERVED_SPECIES_DEBUG_SLOT0=1; fi; python3 tools/gen_reserved_species_tables.py $(NUM_RESERVED_CUSTOM_SPECIES)'
 	@SIG=`python3 -c "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path('tools/gen_reserved_species_tables.py').read_bytes()).hexdigest())"`; \
-	echo "$(NUM_RESERVED_CUSTOM_SPECIES) $$SIG" > $(GEN_RESERVED_SENTINEL).tmp; \
+	echo "$(NUM_RESERVED_CUSTOM_SPECIES) $$SIG dbg$(strip $(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME))" > $(GEN_RESERVED_SENTINEL).tmp; \
 	if ! cmp -s $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL) 2>/dev/null; then mv $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL); else $(RM) $(GEN_RESERVED_SENTINEL).tmp; fi
 
 # Ensure tables exist before compiling any translation unit that includes them.
@@ -258,7 +273,7 @@ test-mailbox-lua:
 	@python3 tools/mgba_scripts/tests/mailbox_logic_test.py
 	@for LUA in lua5.4 lua5.3 lua; do \
 	  if command -v $$LUA >/dev/null 2>&1; then \
-	    $$LUA tools/mgba_scripts/tests/mailbox_logic_test.lua "$$(pwd)" && exit 0; \
+	    $$LUA tools/mgba_scripts/mailbox_logic_test.lua "$$(pwd)" && exit 0; \
 	    exit 1; \
 	  fi; \
 	done; \

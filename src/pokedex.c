@@ -30,17 +30,28 @@ u16 GetNationalPokedexCount(u8 caseID)
 {
     u16 count = 0;
     u16 i;
+    u16 ndex;
 
-    for (i = 0; i < NATIONAL_DEX_COUNT; i++)
+    for (i = 0; i < NATIONAL_DEX_LIST_SLOTS; i++)
     {
+        if (i < NATIONAL_DEX_VANILLA_MAX)
+            ndex = i + 1;
+        else
+        {
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+            ndex = NATIONAL_DEX_RESERVED_CUSTOM_FIRST + (i - NATIONAL_DEX_VANILLA_MAX);
+#else
+            continue;
+#endif
+        }
         switch (caseID)
         {
         case FLAG_GET_SEEN:
-            if (GetSetPokedexFlag(i + 1, FLAG_GET_SEEN))
+            if (GetSetPokedexFlag(ndex, FLAG_GET_SEEN))
                 count++;
             break;
         case FLAG_GET_CAUGHT:
-            if (GetSetPokedexFlag(i + 1, FLAG_GET_CAUGHT))
+            if (GetSetPokedexFlag(ndex, FLAG_GET_CAUGHT))
                 count++;
             break;
         }
@@ -139,7 +150,7 @@ bool16 HasAllMons(void)
     }
 
     // -2 excludes Jirachi and Deoxys
-    for (i = JOHTO_DEX_COUNT; i < NATIONAL_DEX_COUNT - 2; i++)
+    for (i = JOHTO_DEX_COUNT; i < NATIONAL_DEX_VANILLA_MAX - 2; i++)
     {
         if (!GetSetPokedexFlag(i + 1, FLAG_GET_CAUGHT))
             return FALSE;

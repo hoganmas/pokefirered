@@ -1,6 +1,8 @@
 #ifndef GUARD_CONSTANTS_POKEDEX_H
 #define GUARD_CONSTANTS_POKEDEX_H
 
+#include "constants/reserved_species_config.h"
+
 // National Pokedex order
 enum {
     NATIONAL_DEX_NONE,
@@ -423,7 +425,26 @@ enum {
 
 #define KANTO_DEX_COUNT     NATIONAL_DEX_MEW
 #define JOHTO_DEX_COUNT     NATIONAL_DEX_CELEBI
-#define NATIONAL_DEX_COUNT  NATIONAL_DEX_DEOXYS
+
+// Through Deoxys (national numbers 001..386). Used anywhere the original ROM assumed that range.
+#define NATIONAL_DEX_VANILLA_MAX NATIONAL_DEX_DEOXYS
+
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+// National dex numbers for SPECIES_CHIMECHO+1 .. (after Old Unown placeholder IDs, which stay unused in normal UI).
+#define NATIONAL_DEX_RESERVED_CUSTOM_FIRST ((u16)(NATIONAL_DEX_OLD_UNOWN_Z + 1))
+#define NATIONAL_DEX_RESERVED_CUSTOM_LAST (NATIONAL_DEX_RESERVED_CUSTOM_FIRST + NUM_RESERVED_CUSTOM_SPECIES - 1)
+#define NATIONAL_DEX_EXTENDED_MAX NATIONAL_DEX_RESERVED_CUSTOM_LAST
+// Rows in the national numerical list: 001..386 then the reserved block (skips 387..412).
+#define NATIONAL_DEX_LIST_SLOTS ((u16)(NATIONAL_DEX_VANILLA_MAX + NUM_RESERVED_CUSTOM_SPECIES))
+#define NATIONAL_DEX_ORDER_WEIGHT_HEIGHT_COUNT NATIONAL_DEX_LIST_SLOTS
+#else
+#define NATIONAL_DEX_EXTENDED_MAX NATIONAL_DEX_VANILLA_MAX
+#define NATIONAL_DEX_LIST_SLOTS NATIONAL_DEX_VANILLA_MAX
+#define NATIONAL_DEX_ORDER_WEIGHT_HEIGHT_COUNT NATIONAL_DEX_VANILLA_MAX
+#endif
+
+// Legacy name: same as vanilla max (Deoxys).
+#define NATIONAL_DEX_COUNT NATIONAL_DEX_VANILLA_MAX
 
 // Hoenn Pokedex order
 enum {

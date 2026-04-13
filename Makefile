@@ -252,6 +252,19 @@ firered_rev1_modern:   ; @$(MAKE) GAME_VERSION=FIRERED GAME_REVISION=1 MODERN=1
 leafgreen_modern:      ; @$(MAKE) GAME_VERSION=LEAFGREEN MODERN=1
 leafgreen_rev1_modern: ; @$(MAKE) GAME_VERSION=LEAFGREEN GAME_REVISION=1 MODERN=1
 
+# Scripting mailbox self-tests (Python: always; Lua: optional if lua5.4 / lua5.3 / lua is on PATH).
+.PHONY: test-mailbox-lua
+test-mailbox-lua:
+	@python3 tools/mgba_scripts/tests/mailbox_logic_test.py
+	@for LUA in lua5.4 lua5.3 lua; do \
+	  if command -v $$LUA >/dev/null 2>&1; then \
+	    $$LUA tools/mgba_scripts/tests/mailbox_logic_test.lua "$$(pwd)" && exit 0; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "(optional) skipped Lua mirror test: install lua5.3+"; \
+	true
+
 # Other rules
 include graphics_file_rules.mk
 include tileset_rules.mk

@@ -10,7 +10,7 @@ from __future__ import annotations
 # --- sync with reserved_species_mailbox.lua / reserved_species.h ---
 MAGIC = 0x31505352
 TRAIL = 0x544C4252
-VERSION = 1
+VERSION = 2
 OFFSET_MAGIC = 0
 OFFSET_VERSION = 4
 OFFSET_COUNT = 6
@@ -25,8 +25,13 @@ OFFSET_TARGET_SPECIES = 36
 OFFSET_PADDING16 = 38
 OFFSET_SPECIES_INFO_ROW_PTR = 40
 OFFSET_LEVEL_UP_LEARNSET_ENTRY_ADDR = 44
-OFFSET_TRAIL_MAGIC = 48
-MAILBOX_SIZE = 52
+OFFSET_RUNTIME_FRONT_LZ = 48
+OFFSET_RUNTIME_BACK_LZ = 52
+OFFSET_RUNTIME_PAL_LZ = 56
+OFFSET_RUNTIME_SHINY_PAL_LZ = 60
+OFFSET_MON_SHINY_PALETTE = 64
+OFFSET_TRAIL_MAGIC = 68
+MAILBOX_SIZE = 72
 
 
 class EmuShim:
@@ -64,6 +69,11 @@ def place_mailbox(mem: dict[int, int], base: int, **fields) -> None:
     mem[base + OFFSET_TARGET_SPECIES] = tgt | (pad << 16)
     mem[base + OFFSET_SPECIES_INFO_ROW_PTR] = fields["speciesInfoRowPtr"]
     mem[base + OFFSET_LEVEL_UP_LEARNSET_ENTRY_ADDR] = fields["levelUpLearnsetEntryAddr"]
+    mem[base + OFFSET_RUNTIME_FRONT_LZ] = fields.get("runtimeFrontLzAddr", 0)
+    mem[base + OFFSET_RUNTIME_BACK_LZ] = fields.get("runtimeBackLzAddr", 0)
+    mem[base + OFFSET_RUNTIME_PAL_LZ] = fields.get("runtimePalLzAddr", 0)
+    mem[base + OFFSET_RUNTIME_SHINY_PAL_LZ] = fields.get("runtimeShinyPalLzAddr", 0)
+    mem[base + OFFSET_MON_SHINY_PALETTE] = fields.get("monShinyPaletteTable", 0)
     mem[base + OFFSET_TRAIL_MAGIC] = TRAIL
 
 

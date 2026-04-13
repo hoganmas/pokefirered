@@ -109,6 +109,11 @@ local function placeMailbox(mem, base, fields)
     mem[base + M.OFFSET_TARGET_SPECIES] = fields.targetSpecies + ((fields.padding16 or 0) * 65536)
     mem[base + M.OFFSET_SPECIES_INFO_ROW_PTR] = fields.speciesInfoRowPtr
     mem[base + M.OFFSET_LEVEL_UP_LEARNSET_ENTRY_ADDR] = fields.levelUpLearnsetEntryAddr
+    mem[base + M.OFFSET_RUNTIME_FRONT_LZ] = fields.runtimeFrontLzAddr or 0
+    mem[base + M.OFFSET_RUNTIME_BACK_LZ] = fields.runtimeBackLzAddr or 0
+    mem[base + M.OFFSET_RUNTIME_PAL_LZ] = fields.runtimePalLzAddr or 0
+    mem[base + M.OFFSET_RUNTIME_SHINY_PAL_LZ] = fields.runtimeShinyPalLzAddr or 0
+    mem[base + M.OFFSET_MON_SHINY_PALETTE] = fields.monShinyPaletteTable or 0
     mem[base + M.OFFSET_TRAIL_MAGIC] = M.TRAIL
 end
 

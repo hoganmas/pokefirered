@@ -1,5 +1,5 @@
 -- Reserved species / scripting mailbox helpers for mGBA Lua.
--- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 52 bytes.
+-- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 72 bytes.
 --
 -- mGBA: Tools → Scripting → Load this file, then: ReservedSpeciesMailbox.attach()
 -- Tests: make test-mailbox-lua
@@ -18,7 +18,11 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 1
+M.VERSION = 2
+M.SPECIES_SHINY_TAG = 500
+M.RUNTIME_FRONT_LZ_CAP = 0x3000
+M.RUNTIME_BACK_LZ_CAP = 0x3000
+M.RUNTIME_PAL_LZ_CAP = 0x200
 
 M.OFFSET_MAGIC = 0
 M.OFFSET_VERSION = 4
@@ -34,12 +38,17 @@ M.OFFSET_TARGET_SPECIES = 36
 M.OFFSET_PADDING16 = 38
 M.OFFSET_SPECIES_INFO_ROW_PTR = 40
 M.OFFSET_LEVEL_UP_LEARNSET_ENTRY_ADDR = 44
-M.OFFSET_TRAIL_MAGIC = 48
+M.OFFSET_RUNTIME_FRONT_LZ = 48
+M.OFFSET_RUNTIME_BACK_LZ = 52
+M.OFFSET_RUNTIME_PAL_LZ = 56
+M.OFFSET_RUNTIME_SHINY_PAL_LZ = 60
+M.OFFSET_MON_SHINY_PALETTE = 64
+M.OFFSET_TRAIL_MAGIC = 68
 
-M.MAILBOX_SIZE = 52
+M.MAILBOX_SIZE = 72
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
-M.SPRITE_SHEET_ENTRY_SIZE = 12
+M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
 M.PALETTE_ENTRY_SIZE = 8
 
 local function r32(emu, addr)
@@ -81,6 +90,11 @@ function M.readMailbox(emu, base)
         targetSpecies = r16(emu, base + M.OFFSET_TARGET_SPECIES),
         speciesInfoRowPtr = r32(emu, base + M.OFFSET_SPECIES_INFO_ROW_PTR),
         levelUpLearnsetEntryAddr = r32(emu, base + M.OFFSET_LEVEL_UP_LEARNSET_ENTRY_ADDR),
+        runtimeFrontLzAddr = r32(emu, base + M.OFFSET_RUNTIME_FRONT_LZ),
+        runtimeBackLzAddr = r32(emu, base + M.OFFSET_RUNTIME_BACK_LZ),
+        runtimePalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_PAL_LZ),
+        runtimeShinyPalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_SHINY_PAL_LZ),
+        monShinyPaletteTable = r32(emu, base + M.OFFSET_MON_SHINY_PALETTE),
         trailMagic = r32(emu, base + M.OFFSET_TRAIL_MAGIC),
     }
 end
@@ -158,23 +172,21 @@ function M.writeReservedSpeciesName(emu, base, slot, asciiName)
     return addr
 end
 
-function M.patchFrontPicEntry(emu, base, speciesId, picPtr, size, tag)
-    _dbg(string.format("patchFrontPicEntry(base=0x%08X, speciesId=%d, picPtr=0x%08X, size=0x%X, tag=%d)", base, speciesId, picPtr, size, tag))
+function M.patchFrontPicEntry(emu, base, speciesId, picPtr, uncompSize, tag)
+    _dbg(string.format("patchFrontPicEntry(base=0x%08X, speciesId=%d, picPtr=0x%08X, uncompSize=%u, tag=%d)", base, speciesId, picPtr, uncompSize, tag))
     local mb = M.readMailbox(emu, base)
     local a = mb.monFrontPicTable + speciesId * M.SPRITE_SHEET_ENTRY_SIZE
     w32(emu, a + 0, picPtr)
-    w32(emu, a + 4, size)
-    w32(emu, a + 8, tag)
+    w32(emu, a + 4, uncompSize + (tag * 65536))
     return a
 end
 
-function M.patchBackPicEntry(emu, base, speciesId, picPtr, size, tag)
-    _dbg(string.format("patchBackPicEntry(base=0x%08X, speciesId=%d, picPtr=0x%08X, size=0x%X, tag=%d)", base, speciesId, picPtr, size, tag))
+function M.patchBackPicEntry(emu, base, speciesId, picPtr, uncompSize, tag)
+    _dbg(string.format("patchBackPicEntry(base=0x%08X, speciesId=%d, picPtr=0x%08X, uncompSize=%u, tag=%d)", base, speciesId, picPtr, uncompSize, tag))
     local mb = M.readMailbox(emu, base)
     local a = mb.monBackPicTable + speciesId * M.SPRITE_SHEET_ENTRY_SIZE
     w32(emu, a + 0, picPtr)
-    w32(emu, a + 4, size)
-    w32(emu, a + 8, tag)
+    w32(emu, a + 4, uncompSize + (tag * 65536))
     return a
 end
 
@@ -183,8 +195,94 @@ function M.patchPaletteEntry(emu, base, speciesId, palPtr, tag)
     local mb = M.readMailbox(emu, base)
     local a = mb.monPaletteTable + speciesId * M.PALETTE_ENTRY_SIZE
     w32(emu, a + 0, palPtr)
-    w32(emu, a + 4, tag)
+    w32(emu, a + 4, tag % 65536)
     return a
+end
+
+function M.patchShinyPaletteEntry(emu, base, speciesId, palPtr, tag)
+    _dbg(string.format("patchShinyPaletteEntry(base=0x%08X, speciesId=%d, palPtr=0x%08X, tag=%d)", base, speciesId, palPtr, tag))
+    local mb = M.readMailbox(emu, base)
+    local a = mb.monShinyPaletteTable + speciesId * M.PALETTE_ENTRY_SIZE
+    w32(emu, a + 0, palPtr)
+    w32(emu, a + 4, tag % 65536)
+    return a
+end
+
+local function parseManifestText(txt)
+    local out = {}
+    for line in string.gmatch(txt, "[^\r\n]+") do
+        local k, v = line:match("^([A-Z_]+)=(%d+)$")
+        if k and v then
+            out[k] = tonumber(v)
+        end
+    end
+    return out
+end
+
+local function writeFileBytesToEmu(emu, addr, path)
+    local f = assert(io.open(path, "rb"))
+    local data = f:read("*a")
+    f:close()
+    for i = 1, #data do
+        w8(emu, addr + i - 1, string.byte(data, i))
+    end
+    return #data
+end
+
+--- Host-side PNG→LZ77 (python3 + tools/gbagfx), then patch ROM table rows to use ROM scratch LZ blobs (mailbox addresses).
+-- frontPng/backPng: absolute or cwd-relative paths readable by python.
+-- repoRoot: pokefirered root (contains tools/). Default: inferred from this script location.
+function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot)
+    local mb = M.readMailbox(emu, base)
+    if mb.version ~= M.VERSION then
+        error(string.format("mailbox version mismatch: got %d need %d", mb.version, M.VERSION))
+    end
+    if mb.runtimeFrontLzAddr == 0 or mb.runtimeBackLzAddr == 0 then
+        error("mailbox missing runtime LZ staging addresses (rebuild ROM)")
+    end
+    repoRoot = repoRoot or M._REPO_ROOT
+    if not repoRoot or #repoRoot == 0 then
+        error("repoRoot unset: pass applyRuntimePngPair(..., repoRoot) or ensure mailbox script path is known")
+    end
+    local workdir = repoRoot .. "/build/mgba_runtime_rsv_" .. tostring(os.time())
+    local py = repoRoot .. "/tools/runtime_reserved_png_to_lz.py"
+    local cmd = string.format(
+        "mkdir -p %q && cd %q && python3 %q --front %q --back %q --workdir %q",
+        workdir,
+        repoRoot,
+        py,
+        frontPng,
+        backPng,
+        workdir
+    )
+    _dbg("applyRuntimePngPair: " .. cmd)
+    local st = os.execute(cmd)
+    if st == false or (type(st) == "number" and st ~= 0) then
+        error("runtime PNG conversion failed (python3 / gbagfx). status=" .. tostring(st))
+    end
+    local mf = assert(io.open(workdir .. "/manifest.txt", "r"))
+    local man = parseManifestText(mf:read("*a"))
+    mf:close()
+    local flz = man.FRONT_LZ
+    local blz = man.BACK_LZ
+    local plz = man.PAL_LZ
+    local slz = man.SHINY_LZ
+    if not flz or not blz or not plz or not slz then
+        error("bad manifest.txt from runtime_reserved_png_to_lz.py")
+    end
+    if flz > M.RUNTIME_FRONT_LZ_CAP or blz > M.RUNTIME_BACK_LZ_CAP or plz > M.RUNTIME_PAL_LZ_CAP or slz > M.RUNTIME_PAL_LZ_CAP then
+        error("converted LZ larger than ROM scratch caps; raise RESERVED_RUNTIME_*_CAP in reserved_species.h and rebuild")
+    end
+    assert(writeFileBytesToEmu(emu, mb.runtimeFrontLzAddr, workdir .. "/front.4bpp.lz") == flz)
+    assert(writeFileBytesToEmu(emu, mb.runtimeBackLzAddr, workdir .. "/back.4bpp.lz") == blz)
+    assert(writeFileBytesToEmu(emu, mb.runtimePalLzAddr, workdir .. "/normal.gbapal.lz") == plz)
+    assert(writeFileBytesToEmu(emu, mb.runtimeShinyPalLzAddr, workdir .. "/shiny.gbapal.lz") == slz)
+
+    M.patchFrontPicEntry(emu, base, speciesId, mb.runtimeFrontLzAddr, man.FRONT_UNCOMP, speciesId)
+    M.patchBackPicEntry(emu, base, speciesId, mb.runtimeBackLzAddr, man.BACK_UNCOMP, speciesId)
+    M.patchPaletteEntry(emu, base, speciesId, mb.runtimePalLzAddr, speciesId)
+    M.patchShinyPaletteEntry(emu, base, speciesId, mb.runtimeShinyPalLzAddr, speciesId + M.SPECIES_SHINY_TAG)
+    _dbg(string.format("applyRuntimePngPair done species=%u front@0x%08X back@0x%08X", speciesId, mb.runtimeFrontLzAddr, mb.runtimeBackLzAddr))
 end
 
 function M.validateMailbox(emu, base)
@@ -279,6 +377,15 @@ end
 
 function M.getAttachedBase()
     return _attachState.base
+end
+
+do
+    local info = debug.getinfo(1, "S")
+    if info and info.source and info.source:sub(1, 1) == "@" then
+        local p = info.source:sub(2)
+        local dir = (p:gsub("[/\\][^/\\]*$", ""))
+        M._REPO_ROOT = dir .. "/../.."
+    end
 end
 
 ReservedSpeciesMailbox = M

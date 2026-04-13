@@ -1040,6 +1040,13 @@ SECTIONS {
         data/*.o(.rodata);
     } > ROM =0
 
+    /* ROM scratch for mGBA Lua runtime LZ uploads (see reserved_species.c). Placed at end so it does not shift fixed-address ROM blocks. */
+    rom_runtime_lz :
+    ALIGN(4)
+    {
+        src/reserved_species.o(.rom_runtime_lz);
+    } > ROM =0xFF
+
 
     /* DWARF 2 sections */
     .debug_aranges  0 : { *(.debug_aranges) }

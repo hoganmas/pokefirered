@@ -1,5 +1,5 @@
 -- Reserved species / scripting mailbox helpers for mGBA Lua.
--- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 76 bytes.
+-- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 88 bytes.
 --
 -- mGBA: Tools → Scripting → Load this file, then: ReservedSpeciesMailbox.attach()
 -- ROM patches use emu.memory.cart0 (etc.), not raw bus writes, to avoid "Unimplemented memory Store" on 0x08…
@@ -19,7 +19,7 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 3
+M.VERSION = 4
 M.SPECIES_SHINY_TAG = 500
 
 M.OFFSET_MAGIC = 0
@@ -41,10 +41,14 @@ M.OFFSET_RUNTIME_BACK_LZ = 52
 M.OFFSET_RUNTIME_PAL_LZ = 56
 M.OFFSET_RUNTIME_SHINY_PAL_LZ = 60
 M.OFFSET_MON_SHINY_PALETTE = 64
-M.OFFSET_RUNTIME_SCRATCH_END = 68
-M.OFFSET_TRAIL_MAGIC = 72
+M.OFFSET_POKEDEX_CATEGORY_TEXT = 68
+M.OFFSET_POKEDEX_DESCRIPTION_TEXT = 72
+M.OFFSET_POKEDEX_CATEGORY_STRIDE = 76
+M.OFFSET_POKEDEX_DESCRIPTION_STRIDE = 78
+M.OFFSET_RUNTIME_SCRATCH_END = 80
+M.OFFSET_TRAIL_MAGIC = 84
 
-M.MAILBOX_SIZE = 76
+M.MAILBOX_SIZE = 88
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -153,6 +157,10 @@ function M.readMailbox(emu, base)
         runtimePalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_PAL_LZ),
         runtimeShinyPalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_SHINY_PAL_LZ),
         monShinyPaletteTable = r32(emu, base + M.OFFSET_MON_SHINY_PALETTE),
+        pokedexCategoryText = r32(emu, base + M.OFFSET_POKEDEX_CATEGORY_TEXT),
+        pokedexDescriptionText = r32(emu, base + M.OFFSET_POKEDEX_DESCRIPTION_TEXT),
+        pokedexCategoryStride = r16(emu, base + M.OFFSET_POKEDEX_CATEGORY_STRIDE),
+        pokedexDescriptionStride = r16(emu, base + M.OFFSET_POKEDEX_DESCRIPTION_STRIDE),
         runtimeRomScratchEndExclusive = r32(emu, base + M.OFFSET_RUNTIME_SCRATCH_END),
         trailMagic = r32(emu, base + M.OFFSET_TRAIL_MAGIC),
     }
@@ -263,6 +271,48 @@ function M.writeReservedSpeciesName(emu, base, slot, asciiName)
     if console and console.log then
         console:log(string.format("[ReservedSpeciesMailbox] wrote name slot=%d species=%d addr=0x%08X", slot, speciesId, addr))
     end
+    return addr
+end
+
+local function writeAsciiEosStringToRom(emu, addr, text, maxChars)
+    local enc = encodeGen3Text(text or "", maxChars)
+    for i = 0, maxChars do
+        w8(emu, addr + i, 0xFF) -- EOS fill
+    end
+    for i = 1, #enc do
+        w8(emu, addr + (i - 1), enc[i])
+    end
+end
+
+function M.getReservedPokedexCategoryAddr(emu, base, slot)
+    local mb = M.readMailbox(emu, base)
+    if slot < 0 or slot >= mb.count then
+        error(string.format("slot out of range: %d (count=%d)", slot, mb.count))
+    end
+    return mb.pokedexCategoryText + slot * mb.pokedexCategoryStride
+end
+
+function M.getReservedPokedexDescriptionAddr(emu, base, slot)
+    local mb = M.readMailbox(emu, base)
+    if slot < 0 or slot >= mb.count then
+        error(string.format("slot out of range: %d (count=%d)", slot, mb.count))
+    end
+    return mb.pokedexDescriptionText + slot * mb.pokedexDescriptionStride
+end
+
+function M.writeReservedPokedexCategory(emu, base, slot, asciiText)
+    local mb = M.readMailbox(emu, base)
+    local addr = M.getReservedPokedexCategoryAddr(emu, base, slot)
+    local maxChars = math.max(0, mb.pokedexCategoryStride - 1)
+    writeAsciiEosStringToRom(emu, addr, asciiText, maxChars)
+    return addr
+end
+
+function M.writeReservedPokedexDescription(emu, base, slot, asciiText)
+    local mb = M.readMailbox(emu, base)
+    local addr = M.getReservedPokedexDescriptionAddr(emu, base, slot)
+    local maxChars = math.max(0, mb.pokedexDescriptionStride - 1)
+    writeAsciiEosStringToRom(emu, addr, asciiText, maxChars)
     return addr
 end
 

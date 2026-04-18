@@ -88,6 +88,41 @@ local function file_exists(path)
     return false
 end
 
+local function c_string_escape(s)
+    s = tostring(s or "")
+    s = s:gsub("\\", "\\\\")
+    s = s:gsub('"', '\\"')
+    s = s:gsub("\r", "")
+    s = s:gsub("\n", "\\n")
+    return s
+end
+
+local function validate_pokedex_description_text(s)
+    -- Accept either real newlines or literal "\n" delimiters from fixture text.
+    local text = tostring(s or ""):gsub("\\n", "\n")
+    local lines = {}
+    local start = 1
+    while true do
+        local nl = text:find("\n", start, true)
+        if not nl then
+            lines[#lines + 1] = text:sub(start)
+            break
+        end
+        lines[#lines + 1] = text:sub(start, nl - 1)
+        start = nl + 1
+    end
+
+    if #lines > 3 then
+        error("pokedexEntry.descriptionText supports at most 3 lines (use \\n delimiters)")
+    end
+    for i, line in ipairs(lines) do
+        if #line > 43 then
+            error(string.format("pokedexEntry.descriptionText line %d exceeds 43 characters", i))
+        end
+    end
+    return text
+end
+
 local function normalize_fixture(n)
     local path = os.getenv("RESERVED_SPECIES_TEST_FIXTURE") or DEFAULT_FIXTURE_PATH
     if not file_exists(path) then
@@ -155,6 +190,19 @@ local function normalize_fixture(n)
     end
     pokedex_entry = pokedex_entry or {}
 
+    local description_symbol = tostring(pokedex_entry.descriptionSymbol or "gDummyPokedexText")
+    local unused_description_symbol = tostring(pokedex_entry.unusedDescriptionSymbol or "gDummyPokedexTextUnused")
+    local description_text = pokedex_entry.descriptionText
+    local unused_description_text = pokedex_entry.unusedDescriptionText
+    if description_text ~= nil then
+        description_text = validate_pokedex_description_text(description_text)
+        description_symbol = "gReservedSlot0PokedexText"
+        unused_description_symbol = "gReservedSlot0PokedexTextUnused"
+        if unused_description_text == nil then
+            unused_description_text = ""
+        end
+    end
+
     return {
         name = name,
         assetSymbol = asset_symbol,
@@ -174,8 +222,10 @@ local function normalize_fixture(n)
             categoryName = string.sub(tostring(pokedex_entry.categoryName or "CUSTOM"), 1, 11),
             height = tonumber(pokedex_entry.height) or 7,
             weight = tonumber(pokedex_entry.weight) or 69,
-            descriptionSymbol = tostring(pokedex_entry.descriptionSymbol or "gDummyPokedexText"),
-            unusedDescriptionSymbol = tostring(pokedex_entry.unusedDescriptionSymbol or "gDummyPokedexTextUnused"),
+            descriptionSymbol = description_symbol,
+            unusedDescriptionSymbol = unused_description_symbol,
+            descriptionText = description_text and tostring(description_text) or nil,
+            unusedDescriptionText = unused_description_text and tostring(unused_description_text) or nil,
             pokemonScale = tonumber(pokedex_entry.pokemonScale) or 256,
             pokemonOffset = tonumber(pokedex_entry.pokemonOffset) or 0,
             trainerScale = tonumber(pokedex_entry.trainerScale) or 256,
@@ -448,6 +498,27 @@ local function write_reserved_pokedex_aux(n, banner, fixture)
     write_if_changed(OUT_DIR .. "/reserved_pokedex_order_type_append.inc", type_lines)
 end
 
+local function write_reserved_pokedex_text_inc(banner, fixture)
+    local path = OUT_DIR .. "/reserved_pokedex_text.inc"
+    if not fixture or not fixture.pokedexEntry then
+        write_if_changed(path, banner)
+        return
+    end
+
+    local pe = fixture.pokedexEntry
+    if pe.descriptionText == nil and pe.unusedDescriptionText == nil then
+        write_if_changed(path, banner)
+        return
+    end
+
+    local desc = c_string_escape(pe.descriptionText or "")
+    local unused = c_string_escape(pe.unusedDescriptionText or "")
+    local body = banner
+        .. string.format('const u8 gReservedSlot0PokedexText[] = _("%s");\n\n', desc)
+        .. string.format('const u8 gReservedSlot0PokedexTextUnused[] = _("%s");\n', unused)
+    write_if_changed(path, body)
+end
+
 local function main()
     local n = tonumber(arg[1]) or tonumber(os.getenv("NUM_RESERVED_CUSTOM_SPECIES") or "16") or 16
     if n < 0 or n > 64 then
@@ -615,6 +686,7 @@ local function main()
     write_if_changed(OUT_DIR .. "/reserved_pokedex_national.inc", banner .. table.concat(dex_n))
 
     write_reserved_pokedex_aux(n, banner, fixture)
+    write_reserved_pokedex_text_inc(banner, fixture)
 end
 
 main()

@@ -19,7 +19,7 @@
 struct ReservedSpeciesScriptMailbox
 {
     u32 magic; // RESERVED_SPECIES_MAILBOX_MAGIC
-    u16 version; // 3: runtimeRomScratchEndExclusive + LZ slot pointers (see getRuntimeLzScratchLayout in mailbox Lua)
+    u16 version; // 4: adds ROM text-buffer pointers/strides for reserved dex category+description patching
     u16 count; // mirrors NUM_RESERVED_CUSTOM_SPECIES
     u32 speciesInfo;           // &gSpeciesInfo[0]
     u32 levelUpLearnsets;      // &gLevelUpLearnsets[0]
@@ -37,6 +37,10 @@ struct ReservedSpeciesScriptMailbox
     u32 runtimePalLzAddr;
     u32 runtimeShinyPalLzAddr;
     u32 monShinyPaletteTable;  // &gMonShinyPaletteTable[0]
+    u32 pokedexCategoryText;   // &gReservedSpeciesPokedexCategory[0][0] (ROM scratch, emulator-patchable)
+    u32 pokedexDescriptionText;// &gReservedSpeciesPokedexDescription[0][0] (ROM scratch, emulator-patchable)
+    u16 pokedexCategoryStride; // bytes between slot rows in category buffer
+    u16 pokedexDescriptionStride; // bytes between slot rows in description buffer
     // One-past-end bus address for gReservedRuntimeRomLzScratch[] (Lua derives per-slot LZ max from gaps).
     u32 runtimeRomScratchEndExclusive;
     u32 trailMagic; // RESERVED_SPECIES_MAILBOX_TRAIL — verifies struct size for Lua scan

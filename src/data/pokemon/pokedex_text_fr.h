@@ -2718,3 +2718,7 @@ const u8 gDeoxysPokedexText[] = _(
     "altering its appearance.");
 
 const u8 gDeoxysPokedexTextUnused[] = _("");
+
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_pokedex_text.inc"
+#endif

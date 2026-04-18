@@ -6,13 +6,13 @@
 #include "constants/pokedex.h"
 
 EWRAM_DATA struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox = {0};
-const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1] = {0};
-const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1] = {0};
+ALIGNED(4) const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1] = {0};
+ALIGNED(4) const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1] = {0};
 
 // Emulator/runtime scripting may overwrite these ROM bytes (not possible on a real cartridge).
-ALIGNED(4) const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE] __attribute__((section(".rom_runtime_lz"))) = {0};
+ALIGNED(4) const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE] = {0};
 
-STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 76, ReservedSpeciesMailboxLayout);
+STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 88, ReservedSpeciesMailboxLayout);
 
 static s16 ReservedSpecies_NdexToSlot(u16 nationalDex)
 {
@@ -50,7 +50,7 @@ void ReservedSpecies_InitScriptMailbox(void)
     const u16 target = SPECIES_CHIMECHO + 1;
 
     gReservedSpeciesScriptMailbox.magic = RESERVED_SPECIES_MAILBOX_MAGIC;
-    gReservedSpeciesScriptMailbox.version = 3;
+    gReservedSpeciesScriptMailbox.version = 4;
     gReservedSpeciesScriptMailbox.count = NUM_RESERVED_CUSTOM_SPECIES;
     gReservedSpeciesScriptMailbox.speciesInfo = (u32)gSpeciesInfo;
     gReservedSpeciesScriptMailbox.levelUpLearnsets = (u32)gLevelUpLearnsets;
@@ -64,6 +64,10 @@ void ReservedSpecies_InitScriptMailbox(void)
     gReservedSpeciesScriptMailbox.padding16 = 0;
     gReservedSpeciesScriptMailbox.speciesInfoRowPtr = (u32)&gSpeciesInfo[target];
     gReservedSpeciesScriptMailbox.levelUpLearnsetEntryAddr = (u32)&gLevelUpLearnsets[target];
+    gReservedSpeciesScriptMailbox.pokedexCategoryText = (u32)&gReservedSpeciesPokedexCategory[0][0];
+    gReservedSpeciesScriptMailbox.pokedexDescriptionText = (u32)&gReservedSpeciesPokedexDescription[0][0];
+    gReservedSpeciesScriptMailbox.pokedexCategoryStride = sizeof(gReservedSpeciesPokedexCategory[0]);
+    gReservedSpeciesScriptMailbox.pokedexDescriptionStride = sizeof(gReservedSpeciesPokedexDescription[0]);
     {
         const u32 romScratch = (u32)gReservedRuntimeRomLzScratch;
 

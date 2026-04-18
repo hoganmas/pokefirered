@@ -277,6 +277,7 @@ local function write_reserved_custom_graphics_inc(banner, enable_slot0_custom)
         .. 'const u32 gMonBackPic_ReservedSlot0[] = INCBIN_U32("graphics/pokemon/reserved_slot0/back.4bpp.lz");\n'
         .. 'const u32 gMonPalette_ReservedSlot0[] = INCBIN_U32("graphics/pokemon/reserved_slot0/normal.gbapal.lz");\n'
         .. 'const u32 gMonShinyPalette_ReservedSlot0[] = INCBIN_U32("graphics/pokemon/reserved_slot0/shiny.gbapal.lz");\n'
+        .. 'const u8 gMonIcon_ReservedSlot0[] = INCBIN_U8("graphics/pokemon/reserved_slot0/icon.4bpp");\n'
     write_if_changed(path, body)
 end
 
@@ -307,8 +308,17 @@ local function materialize_slot0_fixture_assets(fixture)
     copy_file(out_dir .. "/normal.gbapal", out_dir .. "/shiny.gbapal")
     copy_file(out_dir .. "/normal.gbapal.lz", out_dir .. "/shiny.gbapal.lz")
 
+    -- Party menu icon: 32×32 (16 tiles). From optional pngPaths.icon, else top-left 32×32 of front.png.
+    local icon_src = front_png
+    local icon_png = png_paths.icon
+    if type(icon_png) == "string" and file_exists(icon_png) then
+        copy_file(icon_png, out_dir .. "/icon.png")
+        icon_src = out_dir .. "/icon.png"
+    end
+    run_cmd(string.format("%q %q %q %s", gfx, icon_src, out_dir .. "/icon.4bpp", "-num_tiles 16"))
+
     fixture.assetSymbol = "ReservedSlot0"
-    fixture.iconAssetSymbol = "QuestionMark"
+    fixture.iconAssetSymbol = "ReservedSlot0"
     fixture.footprintAssetSymbol = "Bulbasaur"
     fixture.iconPaletteIndex = 0
     fixture.useCustomGeneratedSlot0Graphics = true

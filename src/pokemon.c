@@ -5835,11 +5835,21 @@ u8 GetNumberOfRelearnableMoves(struct Pokemon *mon)
 
 u16 SpeciesToPokedexNum(u16 species)
 {
-    species = SpeciesToNationalPokedexNum(species);
+    u16 nationalNum = SpeciesToNationalPokedexNum(species);
 
-    if (!IsNationalPokedexEnabled() && species > KANTO_SPECIES_END)
+    if (nationalNum == 0)
+        return 0;
+
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+    // Regional-dex mode hides Johto+ numbers as "???", but reserved custom species use national
+    // numbers past vanilla (413+). Still show their real number in the party summary UI.
+    if (nationalNum >= NATIONAL_DEX_RESERVED_CUSTOM_FIRST && nationalNum <= NATIONAL_DEX_RESERVED_CUSTOM_LAST)
+        return nationalNum;
+#endif
+
+    if (!IsNationalPokedexEnabled() && nationalNum > KANTO_SPECIES_END)
         return 0xFFFF;
-    return species;
+    return nationalNum;
 }
 
 void ClearBattleMonForms(void)

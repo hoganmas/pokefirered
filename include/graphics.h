@@ -40,6 +40,7 @@ extern const u32 gMonFrontPic_ReservedSlot0[];
 extern const u32 gMonPalette_ReservedSlot0[];
 extern const u32 gMonBackPic_ReservedSlot0[];
 extern const u32 gMonShinyPalette_ReservedSlot0[];
+extern const u8 gMonIcon_ReservedSlot0[];
 extern const u32 gMonFrontPic_Ivysaur[];
 extern const u32 gMonPalette_Ivysaur[];
 extern const u32 gMonBackPic_Ivysaur[];

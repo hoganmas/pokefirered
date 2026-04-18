@@ -1,5 +1,5 @@
 -- Reserved species / scripting mailbox helpers for mGBA Lua.
--- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 88 bytes.
+-- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 96 bytes.
 --
 -- mGBA: Tools → Scripting → Load this file, then: ReservedSpeciesMailbox.attach()
 -- ROM patches use emu.memory.cart0 (etc.), not raw bus writes, to avoid "Unimplemented memory Store" on 0x08…
@@ -19,8 +19,11 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 4
+M.VERSION = 5
 M.SPECIES_SHINY_TAG = 500
+M.LEVEL_UP_MOVE_ID = 0x01FF
+M.LEVEL_UP_MOVE_LV = 0xFE00
+M.LEVEL_UP_END = 0xFFFF
 
 M.OFFSET_MAGIC = 0
 M.OFFSET_VERSION = 4
@@ -45,10 +48,13 @@ M.OFFSET_POKEDEX_CATEGORY_TEXT = 68
 M.OFFSET_POKEDEX_DESCRIPTION_TEXT = 72
 M.OFFSET_POKEDEX_CATEGORY_STRIDE = 76
 M.OFFSET_POKEDEX_DESCRIPTION_STRIDE = 78
-M.OFFSET_RUNTIME_SCRATCH_END = 80
-M.OFFSET_TRAIL_MAGIC = 84
+M.OFFSET_RESERVED_LEARNSET_DATA = 80
+M.OFFSET_RESERVED_LEARNSET_STRIDE = 84
+M.OFFSET_RESERVED_LEARNSET_MAX_ENTRIES = 86
+M.OFFSET_RUNTIME_SCRATCH_END = 88
+M.OFFSET_TRAIL_MAGIC = 92
 
-M.MAILBOX_SIZE = 88
+M.MAILBOX_SIZE = 96
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -108,6 +114,11 @@ local function w8(emu, addr, value)
     error("This mGBA Lua runtime does not expose emu:write8")
 end
 
+local function w16(emu, addr, value)
+    w8(emu, addr + 0, value % 256)
+    w8(emu, addr + 1, math.floor(value / 256) % 256)
+end
+
 -- Lua 5.1: os.execute returns status number (0 = success).
 -- Lua 5.2+: returns true on success, or nil/false, "exit", code on failure.
 local function shellSucceeded(a, b, c)
@@ -137,6 +148,30 @@ local function trimPath(s)
     return (s:gsub("[/\\]+$", ""))
 end
 
+local _moveNameToId = nil
+local function loadMoveNameTable()
+    if _moveNameToId then
+        return _moveNameToId
+    end
+    local t = {}
+    local root = trimPath(M._REPO_ROOT or ".")
+    local path = root .. "/include/constants/moves.h"
+    local f = io.open(path, "r")
+    if not f then
+        _moveNameToId = t
+        return t
+    end
+    for line in f:lines() do
+        local name, num = line:match("^#define%s+(MOVE_[A-Z0-9_]+)%s+(%d+)")
+        if name and num then
+            t[name] = tonumber(num)
+        end
+    end
+    f:close()
+    _moveNameToId = t
+    return t
+end
+
 function M.readMailbox(emu, base)
     return {
         magic = r32(emu, base + M.OFFSET_MAGIC),
@@ -161,6 +196,9 @@ function M.readMailbox(emu, base)
         pokedexDescriptionText = r32(emu, base + M.OFFSET_POKEDEX_DESCRIPTION_TEXT),
         pokedexCategoryStride = r16(emu, base + M.OFFSET_POKEDEX_CATEGORY_STRIDE),
         pokedexDescriptionStride = r16(emu, base + M.OFFSET_POKEDEX_DESCRIPTION_STRIDE),
+        reservedLearnsetData = r32(emu, base + M.OFFSET_RESERVED_LEARNSET_DATA),
+        reservedLearnsetStride = r16(emu, base + M.OFFSET_RESERVED_LEARNSET_STRIDE),
+        reservedLearnsetMaxEntries = r16(emu, base + M.OFFSET_RESERVED_LEARNSET_MAX_ENTRIES),
         runtimeRomScratchEndExclusive = r32(emu, base + M.OFFSET_RUNTIME_SCRATCH_END),
         trailMagic = r32(emu, base + M.OFFSET_TRAIL_MAGIC),
     }
@@ -314,6 +352,106 @@ function M.writeReservedPokedexDescription(emu, base, slot, asciiText)
     local maxChars = math.max(0, mb.pokedexDescriptionStride - 1)
     writeAsciiEosStringToRom(emu, addr, asciiText, maxChars)
     return addr
+end
+
+local function packLevelUpMove(level, moveId)
+    if level < 0 or level > 127 then
+        error("level out of range (0..127): " .. tostring(level))
+    end
+    if moveId < 0 or moveId > M.LEVEL_UP_MOVE_ID then
+        error("move id out of range (0..511): " .. tostring(moveId))
+    end
+    return level * 512 + moveId
+end
+
+local function normalizeLevelUpEntry(entry)
+    if type(entry) == "number" then
+        if entry < 0 or entry > 0xFFFF then
+            error("packed level-up entry out of range: " .. tostring(entry))
+        end
+        return entry
+    end
+    if type(entry) == "table" then
+        if entry.level ~= nil and entry.move ~= nil then
+            local mv = entry.move
+            if type(mv) == "string" then
+                mv = loadMoveNameTable()[mv]
+            end
+            return packLevelUpMove(tonumber(entry.level) or -1, tonumber(mv) or -1)
+        end
+        if #entry >= 2 then
+            local mv = entry[2]
+            if type(mv) == "string" then
+                mv = loadMoveNameTable()[mv]
+            end
+            return packLevelUpMove(tonumber(entry[1]) or -1, tonumber(mv) or -1)
+        end
+    end
+    if type(entry) == "string" then
+        local moveId = loadMoveNameTable()[entry]
+        if moveId then
+            -- Default level 1 when only move name is provided.
+            return packLevelUpMove(1, moveId)
+        end
+    end
+    error("invalid learnset entry; use packed u16 or {level=..., move=...} or {level, move}")
+end
+
+function M.getReservedLearnsetAddr(emu, base, slot)
+    local mb = M.readMailbox(emu, base)
+    if slot < 0 or slot >= mb.count then
+        error(string.format("slot out of range: %d (count=%d)", slot, mb.count))
+    end
+    return mb.reservedLearnsetData + slot * mb.reservedLearnsetStride
+end
+
+function M.patchReservedLearnsetPointerById(emu, base, speciesId, learnsetAddr)
+    local mb = M.readMailbox(emu, base)
+    local ptrAddr = mb.levelUpLearnsets + speciesId * 4
+    w32(emu, ptrAddr, learnsetAddr)
+    return ptrAddr
+end
+
+function M.writeReservedLevelUpMoveset(emu, base, slot, entries)
+    local mb = M.readMailbox(emu, base)
+    local speciesId = M.getReservedSpeciesIdForSlot(emu, base, slot)
+    local rowAddr = M.getReservedLearnsetAddr(emu, base, slot)
+    local maxEntries = mb.reservedLearnsetMaxEntries
+    local maxMoves = math.max(0, maxEntries - 1)
+    local moves = entries or {}
+
+    if type(moves) ~= "table" then
+        error("entries must be a table")
+    end
+    if #moves > maxMoves then
+        error(string.format("too many level-up moves (%d > max %d)", #moves, maxMoves))
+    end
+
+    for i = 0, maxEntries - 1 do
+        w16(emu, rowAddr + i * 2, M.LEVEL_UP_END)
+    end
+    for i = 1, #moves do
+        local packed = normalizeLevelUpEntry(moves[i])
+        w16(emu, rowAddr + (i - 1) * 2, packed)
+    end
+
+    local ptrAddr = M.patchReservedLearnsetPointerById(emu, base, speciesId, rowAddr)
+    _dbg(
+        string.format(
+            "writeReservedLevelUpMoveset(slot=%d species=%d entries=%d row=0x%08X ptr=0x%08X)",
+            slot,
+            speciesId,
+            #moves,
+            rowAddr,
+            ptrAddr
+        )
+    )
+    return rowAddr, ptrAddr
+end
+
+-- Convenience helper: accepts {{level, "MOVE_NAME"}, ...} or {{level=..., move="MOVE_NAME"}, ...}
+function M.writeReservedLevelUpMovesetByName(emu, base, slot, namedEntries)
+    return M.writeReservedLevelUpMoveset(emu, base, slot, namedEntries)
 end
 
 function M.patchFrontPicEntry(emu, base, speciesId, picPtr, uncompSize, tag)

@@ -41,6 +41,9 @@ struct ReservedSpeciesScriptMailbox
     u32 pokedexDescriptionText;// &gReservedSpeciesPokedexDescription[0][0] (ROM scratch, emulator-patchable)
     u16 pokedexCategoryStride; // bytes between slot rows in category buffer
     u16 pokedexDescriptionStride; // bytes between slot rows in description buffer
+    u32 reservedLearnsetData;  // &gReservedRuntimeLevelUpLearnsets[0][0] (ROM scratch)
+    u16 reservedLearnsetStride; // bytes between slot rows in learnset buffer
+    u16 reservedLearnsetMaxEntries; // u16 entries per slot row (includes LEVEL_UP_END terminator slot)
     // One-past-end bus address for gReservedRuntimeRomLzScratch[] (Lua derives per-slot LZ max from gaps).
     u32 runtimeRomScratchEndExclusive;
     u32 trailMagic; // RESERVED_SPECIES_MAILBOX_TRAIL — verifies struct size for Lua scan
@@ -53,6 +56,7 @@ extern struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox;
 extern const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE];
 extern const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1];
 extern const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1];
+extern const u16 gReservedRuntimeLevelUpLearnsets[NUM_RESERVED_CUSTOM_SPECIES][MAX_LEVEL_UP_MOVES + 1];
 
 void ReservedSpecies_InitScriptMailbox(void);
 bool8 ReservedSpecies_GetPokedexTextPtrsByNationalDex(u16 nationalDex, const u8 **outCategory, const u8 **outDescription);

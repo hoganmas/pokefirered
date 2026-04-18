@@ -5709,3 +5709,7 @@ static const u16 sChimechoLevelUpLearnset[] = {
 static const u16 sReservedSpeciesEmptyLearnset[] = {
     LEVEL_UP_END
 };
+
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+#include "constants/generated/reserved_levelup_data.inc"
+#endif

@@ -123,6 +123,41 @@ local function validate_pokedex_description_text(s)
     return text
 end
 
+local function normalize_level_up_moves(raw)
+    if raw == nil then
+        return nil
+    end
+    if type(raw) ~= "table" then
+        error("levelUpMoves must be a table when provided")
+    end
+    if #raw > 20 then
+        error("levelUpMoves supports at most 20 entries")
+    end
+    local out = {}
+    for i = 1, #raw do
+        local e = raw[i]
+        local level, move
+        if type(e) == "table" then
+            if e.level ~= nil and e.move ~= nil then
+                level = tonumber(e.level)
+                move = e.move
+            else
+                level = tonumber(e[1])
+                move = e[2]
+            end
+        end
+        if level == nil or move == nil then
+            error(string.format("levelUpMoves[%d] must be {level=..., move=...} or {level, move}", i))
+        end
+        if level < 0 or level > 100 then
+            error(string.format("levelUpMoves[%d] level must be 0..100", i))
+        end
+        local moveExpr = tostring(move)
+        out[#out + 1] = { level = level, move = moveExpr }
+    end
+    return out
+end
+
 local function normalize_fixture(n)
     local path = os.getenv("RESERVED_SPECIES_TEST_FIXTURE") or DEFAULT_FIXTURE_PATH
     if not file_exists(path) then
@@ -231,6 +266,7 @@ local function normalize_fixture(n)
             trainerScale = tonumber(pokedex_entry.trainerScale) or 256,
             trainerOffset = tonumber(pokedex_entry.trainerOffset) or 0,
         },
+        levelUpMoves = normalize_level_up_moves(raw.levelUpMoves),
     }
 end
 
@@ -266,6 +302,7 @@ local function make_debug_slot0_fixture()
             trainerScale = 256,
             trainerOffset = 0,
         },
+        levelUpMoves = nil,
     }
 end
 
@@ -519,6 +556,23 @@ local function write_reserved_pokedex_text_inc(banner, fixture)
     write_if_changed(path, body)
 end
 
+local function write_reserved_levelup_data_inc(banner, fixture)
+    local path = OUT_DIR .. "/reserved_levelup_data.inc"
+    if not fixture or not fixture.levelUpMoves or #fixture.levelUpMoves == 0 then
+        write_if_changed(path, banner)
+        return nil
+    end
+
+    local lines = {}
+    lines[#lines + 1] = "static const u16 sReservedSlot0LevelUpLearnset[] = {\n"
+    for _, e in ipairs(fixture.levelUpMoves) do
+        lines[#lines + 1] = string.format("    LEVEL_UP_MOVE(%d, %s),\n", e.level, e.move)
+    end
+    lines[#lines + 1] = "    LEVEL_UP_END\n};\n"
+    write_if_changed(path, banner .. table.concat(lines))
+    return "sReservedSlot0LevelUpLearnset"
+end
+
 local function main()
     local n = tonumber(arg[1]) or tonumber(os.getenv("NUM_RESERVED_CUSTOM_SPECIES") or "16") or 16
     if n < 0 or n > 64 then
@@ -544,6 +598,7 @@ local function main()
         fixture and fixture.useCustomGeneratedSlot0Graphics,
         fixture and fixture.useCustomGeneratedSlot0Footprint
     )
+    local customSlot0LearnsetSymbol = write_reserved_levelup_data_inc(banner, fixture)
 
     local body = {}
     for i = 0, n - 1 do
@@ -555,7 +610,8 @@ local function main()
     for i = 0, n - 1 do
         local sid = species_id(i)
         if fixture and i == 0 then
-            lines[#lines + 1] = string.format("    [%s] = %s,\n", sid, fixture.learnsetSymbol)
+            local sym = customSlot0LearnsetSymbol or fixture.learnsetSymbol
+            lines[#lines + 1] = string.format("    [%s] = %s,\n", sid, sym)
         else
             lines[#lines + 1] = string.format("    [%s] = sReservedSpeciesEmptyLearnset,\n", sid)
         end

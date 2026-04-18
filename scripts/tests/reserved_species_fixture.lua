@@ -35,4 +35,10 @@ return {
         types1 = "TYPE_STEEL",
         growthRate = "GROWTH_SLOW",
     },
+    levelUpMoves = {
+        { level = 1, move = "MOVE_TACKLE" },
+        { level = 7, move = "MOVE_WATER_GUN" },
+        { level = 14, move = "MOVE_BITE" },
+        { level = 21, move = "MOVE_ANCIENT_POWER" },
+    },
 }

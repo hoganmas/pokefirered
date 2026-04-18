@@ -1,5 +1,5 @@
 -- Reserved species / scripting mailbox helpers for mGBA Lua.
--- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 96 bytes.
+-- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 104 bytes.
 --
 -- mGBA: Tools → Scripting → Load this file, then: ReservedSpeciesMailbox.attach()
 -- ROM patches use emu.memory.cart0 (etc.), not raw bus writes, to avoid "Unimplemented memory Store" on 0x08…
@@ -19,7 +19,7 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 5
+M.VERSION = 6
 M.SPECIES_SHINY_TAG = 500
 M.LEVEL_UP_MOVE_ID = 0x01FF
 M.LEVEL_UP_MOVE_LV = 0xFE00
@@ -52,9 +52,21 @@ M.OFFSET_RESERVED_LEARNSET_DATA = 80
 M.OFFSET_RESERVED_LEARNSET_STRIDE = 84
 M.OFFSET_RESERVED_LEARNSET_MAX_ENTRIES = 86
 M.OFFSET_RUNTIME_SCRATCH_END = 88
-M.OFFSET_TRAIL_MAGIC = 92
+M.OFFSET_NEW_POKEMON_INFO = 92
+M.OFFSET_NEW_POKEMON_PENDING = 96
+M.OFFSET_TRAIL_MAGIC = 100
 
-M.MAILBOX_SIZE = 96
+M.MAILBOX_SIZE = 104
+
+-- struct NewPokemonInfo (include/reserved_species.h), minimal payload.
+M.NEW_POKEMON_INFO_SIZE = 132
+M.NEW_POKEMON_PENDING_SLOT_SIZE = 8
+M.NEW_POKEMON_PENDING_MAX = 4
+M.NEW_POKEMON_PROMPT_TEXT_LEN = 127
+M.OFFSET_NPI_PREV_EVOLUTION_SPECIES = 0
+M.OFFSET_NPI_PROMPT_TEXT = 2
+M.OFFSET_NPP_STATUS = 0
+M.OFFSET_NPP_REQUEST_ID = 4
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -200,6 +212,8 @@ function M.readMailbox(emu, base)
         reservedLearnsetStride = r16(emu, base + M.OFFSET_RESERVED_LEARNSET_STRIDE),
         reservedLearnsetMaxEntries = r16(emu, base + M.OFFSET_RESERVED_LEARNSET_MAX_ENTRIES),
         runtimeRomScratchEndExclusive = r32(emu, base + M.OFFSET_RUNTIME_SCRATCH_END),
+        newPokemonInfo = r32(emu, base + M.OFFSET_NEW_POKEMON_INFO),
+        newPokemonPendingSlots = r32(emu, base + M.OFFSET_NEW_POKEMON_PENDING),
         trailMagic = r32(emu, base + M.OFFSET_TRAIL_MAGIC),
     }
 end

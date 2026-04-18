@@ -115,6 +115,8 @@ local function placeMailbox(mem, base, fields)
     mem[base + M.OFFSET_RUNTIME_SHINY_PAL_LZ] = fields.runtimeShinyPalLzAddr or 0
     mem[base + M.OFFSET_MON_SHINY_PALETTE] = fields.monShinyPaletteTable or 0
     mem[base + M.OFFSET_RUNTIME_SCRATCH_END] = fields.runtimeRomScratchEndExclusive or 0
+    mem[base + M.OFFSET_NEW_POKEMON_INFO] = fields.newPokemonInfo or 0
+    mem[base + M.OFFSET_NEW_POKEMON_PENDING] = fields.newPokemonPendingSlots or 0
     mem[base + M.OFFSET_TRAIL_MAGIC] = M.TRAIL
 end
 

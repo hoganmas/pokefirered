@@ -14,12 +14,40 @@
 #define RESERVED_POKEDEX_CATEGORY_TEXT_LEN 11u
 #define RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN 255u
 
+#define NEW_POKEMON_PENDING_MAX 4
+#define NEW_POKEMON_PROMPT_TEXT_LEN 127u
+
+// Shared payload for the currently active/newest request. Keep this minimal: source evolution + prompt text.
+
+struct NewPokemonInfo
+{
+    u16 prevEvolutionSpecies;
+    u8 promptText[NEW_POKEMON_PROMPT_TEXT_LEN + 1];
+};
+
+enum NewPokemonRequestStatus
+{
+    NEW_POKEMON_REQ_EMPTY = 0,
+    NEW_POKEMON_REQ_PENDING = 1,
+    NEW_POKEMON_REQ_LUA_CLAIMED = 2,
+    NEW_POKEMON_REQ_DONE = 3,
+    NEW_POKEMON_REQ_FAILED = 4,
+};
+
+// One row per concurrent pending request (queue of request ids + status). Payload lives in gNewPokemonInfo.
+struct NewPokemonPendingSlot
+{
+    u8 status; // NewPokemonRequestStatus
+    u8 padding[3];
+    u32 requestId;
+};
+
 // Written once at boot for external tooling (mGBA Lua, etc.). Bus addresses (0x08… ROM, 0x02… EWRAM).
 // Layout is duplicated in scripts/reserved_species_mailbox.lua (OFFSET_*).
 struct ReservedSpeciesScriptMailbox
 {
     u32 magic; // RESERVED_SPECIES_MAILBOX_MAGIC
-    u16 version; // 4: adds ROM text-buffer pointers/strides for reserved dex category+description patching
+    u16 version; // 6: adds newPokemonInfo + newPokemonPendingSlots pointers (EWRAM)
     u16 count; // mirrors NUM_RESERVED_CUSTOM_SPECIES
     u32 speciesInfo;           // &gSpeciesInfo[0]
     u32 levelUpLearnsets;      // &gLevelUpLearnsets[0]
@@ -46,6 +74,8 @@ struct ReservedSpeciesScriptMailbox
     u16 reservedLearnsetMaxEntries; // u16 entries per slot row (includes LEVEL_UP_END terminator slot)
     // One-past-end bus address for gReservedRuntimeRomLzScratch[] (Lua derives per-slot LZ max from gaps).
     u32 runtimeRomScratchEndExclusive;
+    u32 newPokemonInfo;         // &gNewPokemonInfo (EWRAM)
+    u32 newPokemonPendingSlots; // &gNewPokemonPending[0] (EWRAM)
     u32 trailMagic; // RESERVED_SPECIES_MAILBOX_TRAIL — verifies struct size for Lua scan
 };
 
@@ -53,6 +83,8 @@ struct ReservedSpeciesScriptMailbox
 #define RESERVED_SPECIES_MAILBOX_TRAIL 0x544C4252u // 'RLBT' — end marker for bounds checks
 
 extern struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox;
+extern struct NewPokemonInfo gNewPokemonInfo;
+extern struct NewPokemonPendingSlot gNewPokemonPending[NEW_POKEMON_PENDING_MAX];
 extern const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE];
 extern const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1];
 extern const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1];

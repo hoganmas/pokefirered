@@ -6,6 +6,8 @@
 #include "constants/pokedex.h"
 
 EWRAM_DATA struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox = {0};
+EWRAM_DATA struct NewPokemonInfo gNewPokemonInfo = {0};
+EWRAM_DATA struct NewPokemonPendingSlot gNewPokemonPending[NEW_POKEMON_PENDING_MAX] = {0};
 ALIGNED(4) const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1] = {0};
 ALIGNED(4) const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1] = {0};
 ALIGNED(4) const u16 gReservedRuntimeLevelUpLearnsets[NUM_RESERVED_CUSTOM_SPECIES][MAX_LEVEL_UP_MOVES + 1] = {0};
@@ -13,7 +15,9 @@ ALIGNED(4) const u16 gReservedRuntimeLevelUpLearnsets[NUM_RESERVED_CUSTOM_SPECIE
 // Emulator/runtime scripting may overwrite these ROM bytes (not possible on a real cartridge).
 ALIGNED(4) const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE] = {0};
 
-STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 96, ReservedSpeciesMailboxLayout);
+STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 104, ReservedSpeciesMailboxLayout);
+STATIC_ASSERT(sizeof(struct NewPokemonInfo) == 132, NewPokemonInfoLayout);
+STATIC_ASSERT(sizeof(struct NewPokemonPendingSlot) == 8, NewPokemonPendingSlotLayout);
 
 static s16 ReservedSpecies_NdexToSlot(u16 nationalDex)
 {
@@ -51,7 +55,7 @@ void ReservedSpecies_InitScriptMailbox(void)
     const u16 target = SPECIES_CHIMECHO + 1;
 
     gReservedSpeciesScriptMailbox.magic = RESERVED_SPECIES_MAILBOX_MAGIC;
-    gReservedSpeciesScriptMailbox.version = 5;
+    gReservedSpeciesScriptMailbox.version = 6;
     gReservedSpeciesScriptMailbox.count = NUM_RESERVED_CUSTOM_SPECIES;
     gReservedSpeciesScriptMailbox.speciesInfo = (u32)gSpeciesInfo;
     gReservedSpeciesScriptMailbox.levelUpLearnsets = (u32)gLevelUpLearnsets;
@@ -82,6 +86,8 @@ void ReservedSpecies_InitScriptMailbox(void)
             romScratch + RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP;
         gReservedSpeciesScriptMailbox.runtimeRomScratchEndExclusive = romScratch + RESERVED_RUNTIME_ROM_SCRATCH_SIZE;
     }
+    gReservedSpeciesScriptMailbox.newPokemonInfo = (u32)&gNewPokemonInfo;
+    gReservedSpeciesScriptMailbox.newPokemonPendingSlots = (u32)&gNewPokemonPending[0];
     gReservedSpeciesScriptMailbox.trailMagic = RESERVED_SPECIES_MAILBOX_TRAIL;
     ReservedSpecies_MgbaScriptHandshake();
 }

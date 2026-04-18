@@ -420,7 +420,7 @@
 #define SPECIES_JIRACHI 409
 #define SPECIES_DEOXYS 410
 #define SPECIES_CHIMECHO 411
-// Placeholder species IDs for external ROM patching / tooling (see tools/gen_reserved_species_tables.py).
+// Placeholder species IDs for external ROM patching / tooling (see scripts/gen_reserved_species_tables.lua).
 #define SPECIES_EGG (SPECIES_CHIMECHO + 1 + NUM_RESERVED_CUSTOM_SPECIES)
 
 #define NUM_SPECIES SPECIES_EGG

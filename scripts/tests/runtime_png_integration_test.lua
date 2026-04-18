@@ -35,9 +35,9 @@ local thisDir = scriptDir()
 
 local candidates = {}
 if thisDir then
-    candidates[#candidates + 1] = thisDir .. "/reserved_species_mailbox.lua"
+    candidates[#candidates + 1] = thisDir .. "/../reserved_species_mailbox.lua"
 end
-candidates[#candidates + 1] = root .. "/tools/mgba_scripts/reserved_species_mailbox.lua"
+candidates[#candidates + 1] = root .. "/scripts/reserved_species_mailbox.lua"
 
 local chunk, err, loadedPath = nil, nil, nil
 for _, path in ipairs(candidates) do
@@ -124,17 +124,19 @@ do
         fail("module path resolution failed")
     end
 
-    local testWork = root .. "/build/mgba_runtime_png_test_" .. tostring(os.time())
-    local genCmd = string.format(
-        "mkdir -p %q && cd %q && python3 %q --outdir %q",
-        testWork,
-        root,
-        root .. "/tools/mgba_scripts/tests/gen_runtime_test_pngs.py",
-        testWork
-    )
-    local genStatus = os.execute(genCmd)
-    if genStatus == false or (type(genStatus) == "number" and genStatus ~= 0) then
-        fail("failed to generate runtime test PNGs")
+    local frontPng = root .. "/scripts/tests/fixtures/front.png"
+    local backPng = root .. "/scripts/tests/fixtures/back.png"
+    do
+        local f = io.open(frontPng, "r")
+        if not f then
+            fail("missing " .. frontPng .. " (commit scripts/tests/fixtures/*.png)")
+        end
+        f:close()
+        f = io.open(backPng, "r")
+        if not f then
+            fail("missing " .. backPng)
+        end
+        f:close()
     end
 
     local mem32, mem8 = {}, {}
@@ -174,8 +176,6 @@ do
         runtimeRomScratchEndExclusive = runtimeEnd,
     })
 
-    local frontPng = testWork .. "/front.png"
-    local backPng = testWork .. "/back.png"
     M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, root)
 
     local frontUncomp = lzUncompressedSize(mem8, runtimeFront)

@@ -3,7 +3,7 @@
 
 // Number of placeholder species IDs inserted after CHIMECHO and before EGG.
 // Override at compile time: make NUM_RESERVED_CUSTOM_SPECIES=24
-// Must match the value passed to tools/gen_reserved_species_tables.py (see Makefile).
+// Must match the value passed to scripts/gen_reserved_species_tables.lua (see Makefile).
 #ifndef NUM_RESERVED_CUSTOM_SPECIES
 #define NUM_RESERVED_CUSTOM_SPECIES 16
 #endif
@@ -19,6 +19,6 @@
 //
 // When DEBUG_GIVE_RESERVED_SPECIES_NEWGAME=1, `make` also regenerates reserved tables so slot 0
 // mirrors Bulbasaur graphics/learnset and uses its own national dex number (NATIONAL_DEX_RESERVED_CUSTOM_FIRST,
-// after Old Unown placeholders). See tools/gen_reserved_species_tables.py and include/constants/pokedex.h.
+// after Old Unown placeholders). See scripts/gen_reserved_species_tables.lua and include/constants/pokedex.h.
 
 #endif // GUARD_RESERVED_SPECIES_CONFIG_H

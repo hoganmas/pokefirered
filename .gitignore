@@ -67,3 +67,9 @@ build-cmake-*/
 CMakeLists.txt
 compile_commands.json
 include/constants/generated/
+
+# scripts/ Lua tooling: transient mGBA PNG→LZ workdirs (normally under ignored build/)
+mgba_runtime_rsv_*/
+# optional bytecode / editor backups from local Lua runs
+*.luac
+*.lua.bak

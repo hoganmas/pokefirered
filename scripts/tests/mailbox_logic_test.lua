@@ -1,6 +1,6 @@
 -- (Note) mGBA Lua doesn't support shebang lines; keep this file pure Lua.
 -- Unit tests for reserved_species_mailbox.lua (no mGBA; pure Lua 5.3+).
--- Run from repo root: make test-mailbox-lua
+-- Run from repo root: make test-mailbox-lua (or: lua scripts/tests/mailbox_logic_test.lua "$(pwd)")
 -- Optional arg[1] = repo root path if cwd is not the project root.
 
 local function log(msg)
@@ -34,9 +34,9 @@ log(string.format("DBG: loading mailbox_logic_test.lua (root=%s dir=%s)", tostri
 
 local candidates = {}
 if thisDir then
-    candidates[#candidates + 1] = thisDir .. "/reserved_species_mailbox.lua"
+    candidates[#candidates + 1] = thisDir .. "/../reserved_species_mailbox.lua"
 end
-candidates[#candidates + 1] = root .. "/tools/mgba_scripts/reserved_species_mailbox.lua"
+candidates[#candidates + 1] = root .. "/scripts/reserved_species_mailbox.lua"
 
 local chunk, err, loadedPath = nil, nil, nil
 for _, path in ipairs(candidates) do

@@ -3,7 +3,7 @@
 
 #include "global.h"
 
-// LZ staging caps for mGBA runtime uploads (see tools/runtime_reserved_png_to_lz.py + reserved_species_mailbox.lua).
+// LZ staging caps for mGBA runtime uploads (see scripts/reserved_species_mailbox.lua; PNG→LZ via tools/gbagfx/gbagfx).
 // Payloads live in a dedicated ROM scratch region (not EWRAM); the emulator patches those bytes when applying PNGs.
 #define RESERVED_RUNTIME_FRONT_LZ_CAP 0x3000u
 #define RESERVED_RUNTIME_BACK_LZ_CAP 0x3000u
@@ -12,7 +12,7 @@
     (RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP)
 
 // Written once at boot for external tooling (mGBA Lua, etc.). Bus addresses (0x08… ROM, 0x02… EWRAM).
-// Layout is duplicated in tools/mgba_scripts/reserved_species_mailbox.lua (OFFSET_*).
+// Layout is duplicated in scripts/reserved_species_mailbox.lua (OFFSET_*).
 struct ReservedSpeciesScriptMailbox
 {
     u32 magic; // RESERVED_SPECIES_MAILBOX_MAGIC
@@ -51,7 +51,7 @@ void ReservedSpecies_InitScriptMailbox(void);
 void ReservedSpecies_MgbaScriptHandshake(void);
 
 /*
-  mGBA: load tools/mgba_scripts/reserved_species_mailbox.lua (Scripting window), then
+  mGBA: load scripts/reserved_species_mailbox.lua (Scripting window), then
   ReservedSpeciesMailbox.attach() to scan EWRAM for magic+trail and read row pointers.
 
   Runtime PNG → LZ77 + ROM table patches (host-side convert, emu writes): ReservedSpeciesMailbox.applyRuntimePngPair(...)

@@ -214,10 +214,13 @@ $(RESERVED_GEN_BUILD_OPTS): Makefile reserved_gen_build_opts_phony
 	@echo "DEBUG_GIVE_RESERVED_SPECIES_NEWGAME=$(strip $(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME))" > $@.tmp
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else $(RM) $@.tmp; fi
 
-$(GEN_RESERVED_SENTINEL): Makefile tools/gen_reserved_species_tables.py include/constants/reserved_species_config.h $(RESERVED_GEN_BUILD_OPTS)
+$(GEN_RESERVED_SENTINEL): Makefile scripts/gen_reserved_species_tables.lua include/constants/reserved_species_config.h $(RESERVED_GEN_BUILD_OPTS)
 	@mkdir -p include/constants/generated
-	@sh -c 'if [ "$(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME)" = 1 ]; then export RESERVED_SPECIES_DEBUG_SLOT0=1; fi; python3 tools/gen_reserved_species_tables.py $(NUM_RESERVED_CUSTOM_SPECIES)'
-	@SIG=`python3 -c "import hashlib, pathlib; print(hashlib.sha256(pathlib.Path('tools/gen_reserved_species_tables.py').read_bytes()).hexdigest())"`; \
+	@LUA=; for l in lua5.4 lua5.3 lua; do command -v $$l >/dev/null 2>&1 && LUA=$$l && break; done; \
+	test -n "$$LUA" || (echo "reserved species generator needs Lua (lua5.3+ on PATH)" >&2; exit 1); \
+	if [ "$(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME)" = 1 ]; then export RESERVED_SPECIES_DEBUG_SLOT0=1; fi; \
+	$$LUA scripts/gen_reserved_species_tables.lua $(NUM_RESERVED_CUSTOM_SPECIES)
+	@SIG=`openssl dgst -sha256 scripts/gen_reserved_species_tables.lua | awk '{print $$NF}'`; \
 	echo "$(NUM_RESERVED_CUSTOM_SPECIES) $$SIG dbg$(strip $(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME))" > $(GEN_RESERVED_SENTINEL).tmp; \
 	if ! cmp -s $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL) 2>/dev/null; then mv $(GEN_RESERVED_SENTINEL).tmp $(GEN_RESERVED_SENTINEL); else $(RM) $(GEN_RESERVED_SENTINEL).tmp; fi
 
@@ -267,28 +270,27 @@ firered_rev1_modern:   ; @$(MAKE) GAME_VERSION=FIRERED GAME_REVISION=1 MODERN=1
 leafgreen_modern:      ; @$(MAKE) GAME_VERSION=LEAFGREEN MODERN=1
 leafgreen_rev1_modern: ; @$(MAKE) GAME_VERSION=LEAFGREEN GAME_REVISION=1 MODERN=1
 
-# Scripting mailbox self-tests (Python: always; Lua: optional if lua5.4 / lua5.3 / lua is on PATH).
+# Scripting mailbox self-tests (Lua only; lua5.4 / lua5.3 / lua on PATH).
 .PHONY: test-mailbox-lua test-mailbox-runtime
 test-mailbox-lua:
-	@python3 tools/mgba_scripts/tests/mailbox_logic_test.py
 	@for LUA in lua5.4 lua5.3 lua; do \
 	  if command -v $$LUA >/dev/null 2>&1; then \
-	    $$LUA tools/mgba_scripts/mailbox_logic_test.lua "$$(pwd)" && exit 0; \
+	    $$LUA scripts/tests/mailbox_logic_test.lua "$$(pwd)" && exit 0; \
 	    exit 1; \
 	  fi; \
 	done; \
-	echo "(optional) skipped Lua mirror test: install lua5.3+"; \
-	true
+	echo "missing Lua runtime (need lua5.3+ for test-mailbox-lua)" >&2; \
+	exit 1
 
 # Runtime integration test: executes applyRuntimePngPair against an emu shim and real PNG->LZ conversion.
 test-mailbox-runtime:
 	@for LUA in lua5.4 lua5.3 lua; do \
 	  if command -v $$LUA >/dev/null 2>&1; then \
-	    $$LUA tools/mgba_scripts/runtime_png_integration_test.lua "$$(pwd)" && exit 0; \
+	    $$LUA scripts/tests/runtime_png_integration_test.lua "$$(pwd)" && exit 0; \
 	    exit 1; \
 	  fi; \
 	done; \
-	echo "missing Lua runtime (need lua5.3+ for test-mailbox-runtime)"; \
+	echo "missing Lua runtime (need lua5.3+ for test-mailbox-runtime)" >&2; \
 	exit 1
 
 # Other rules

@@ -323,9 +323,108 @@ local function writeFileBytesToEmu(emu, addr, path)
     return #data
 end
 
---- Host-side PNG→LZ77 (python3 + tools/gbagfx), then patch ROM table rows to use ROM scratch LZ blobs (mailbox addresses).
+local function hostCopyBinary(src, dst)
+    local inf = assert(io.open(src, "rb"))
+    local data = inf:read("*a")
+    inf:close()
+    local outf = assert(io.open(dst, "wb"))
+    outf:write(data)
+    outf:close()
+end
+
+local function hostLzUncompressedSize(path)
+    local f = assert(io.open(path, "rb"))
+    local b0 = f:read(1)
+    local b1 = f:read(1)
+    local b2 = f:read(1)
+    local b3 = f:read(1)
+    f:close()
+    if not b0 or string.byte(b0) ~= 0x10 then
+        error("bad LZ header in " .. path)
+    end
+    return string.byte(b1) + string.byte(b2) * 256 + string.byte(b3) * 65536
+end
+
+local function hostFileSize(path)
+    local f = assert(io.open(path, "rb"))
+    local n = #f:read("*a")
+    f:close()
+    return n
+end
+
+--- Host: PNG → 4bpp.lz / palette.lz via tools/gbagfx only (no Python). Writes manifest.txt in workdir.
+local function hostPngPairToLzWorkdir(repoRoot, frontPng, backPng, workdir, errLog)
+    local gfx = repoRoot .. "/tools/gbagfx/gbagfx"
+    if package.config:sub(1, 1) == "\\" then
+        gfx = gfx .. ".exe"
+    end
+    local gf = io.open(gfx, "r")
+    if not gf then
+        error("missing gbagfx (run `make` in pokefirered): " .. gfx)
+    end
+    gf:close()
+
+    local function run(fmt, ...)
+        local cmd = string.format(fmt, ...) .. " 2>>" .. string.format("%q", errLog)
+        local a, b, c = os.execute(cmd)
+        if not shellSucceeded(a, b, c) then
+            local err = readFileMaybe(errLog)
+            error(
+                string.format(
+                    "gbagfx step failed. cmd=%s err=%s",
+                    string.format(fmt, ...),
+                    err or "(see " .. errLog .. ")"
+                )
+            )
+        end
+    end
+
+    local a0, b0, c0 = os.execute(string.format("mkdir -p %q", workdir))
+    if not shellSucceeded(a0, b0, c0) then
+        error("mkdir failed: " .. workdir)
+    end
+    hostCopyBinary(frontPng, workdir .. "/front.png")
+    hostCopyBinary(backPng, workdir .. "/back.png")
+
+    local wf, wb = workdir .. "/front.png", workdir .. "/back.png"
+    local f4, b4 = workdir .. "/front.4bpp", workdir .. "/back.4bpp"
+    local flz, blz = workdir .. "/front.4bpp.lz", workdir .. "/back.4bpp.lz"
+    local ngb = workdir .. "/normal.gbapal"
+    local nlz, slz = workdir .. "/normal.gbapal.lz", workdir .. "/shiny.gbapal.lz"
+
+    run("%q %q %q %s", gfx, wf, f4, "-num_tiles 64")
+    run("%q %q %q", gfx, f4, flz)
+    run("%q %q %q %s", gfx, wb, b4, "-num_tiles 64")
+    run("%q %q %q", gfx, b4, blz)
+    run("%q %q %q", gfx, wf, ngb)
+    run("%q %q %q", gfx, ngb, nlz)
+    hostCopyBinary(nlz, slz)
+
+    local fu = hostLzUncompressedSize(flz)
+    local bu = hostLzUncompressedSize(blz)
+    local plz = hostFileSize(nlz)
+    local slzsz = hostFileSize(slz)
+    local flen = hostFileSize(flz)
+    local blen = hostFileSize(blz)
+
+    local mf = assert(io.open(workdir .. "/manifest.txt", "w"))
+    mf:write(
+        string.format(
+            "FRONT_UNCOMP=%d\nBACK_UNCOMP=%d\nFRONT_LZ=%d\nBACK_LZ=%d\nPAL_LZ=%d\nSHINY_LZ=%d\n",
+            fu,
+            bu,
+            flen,
+            blen,
+            plz,
+            slzsz
+        )
+    )
+    mf:close()
+end
+
+--- Host-side PNG→LZ77 (tools/gbagfx only), then patch ROM table rows to use ROM scratch LZ blobs (mailbox addresses).
 -- frontPng/backPng: host paths that mGBA can open (absolute paths are safest for the mGBA console).
--- repoRoot: pokefirered root (must contain tools/runtime_reserved_png_to_lz.py and tools/gbagfx/gbagfx). Default: inferred from script path.
+-- repoRoot: pokefirered root (must contain tools/gbagfx/gbagfx). Default: inferred from script path.
 function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot)
     local mb = M.readMailbox(emu, base)
     if mb.version ~= M.VERSION then
@@ -339,14 +438,17 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
     if not repoRoot or #repoRoot == 0 then
         error("repoRoot unset: pass applyRuntimePngPair(..., lastArg=repoRoot as absolute path to pokefirered)")
     end
-    local py = repoRoot .. "/tools/runtime_reserved_png_to_lz.py"
-    local fpy = io.open(py, "r")
-    if not fpy then
+    local testGfx = repoRoot .. "/tools/gbagfx/gbagfx"
+    if package.config:sub(1, 1) == "\\" then
+        testGfx = testGfx .. ".exe"
+    end
+    if not io.open(testGfx, "r") then
         error(
-            "repoRoot is wrong (missing " .. py .. "). Pass the absolute path to the pokefirered project root, not a placeholder like /full/path/..."
+            "repoRoot is wrong (missing "
+                .. testGfx
+                .. "). Pass the absolute path to the pokefirered project root."
         )
     end
-    fpy:close()
     for label, p in pairs({ front = frontPng, back = backPng }) do
         local pfd = io.open(p, "r")
         if not pfd then
@@ -357,47 +459,18 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
 
     local workdir = repoRoot .. "/build/mgba_runtime_rsv_" .. tostring(os.time())
     local errLog = workdir .. "/convert_stderr.txt"
-    -- stderr to errLog for diagnostics; workdir is created in the same shell line first.
-    local cmd = string.format(
-        "mkdir -p %q && cd %q && python3 %q --front %q --back %q --workdir %q 2>%q",
-        workdir,
-        repoRoot,
-        py,
-        frontPng,
-        backPng,
-        workdir,
-        errLog
-    )
-    _dbg("applyRuntimePngPair: " .. cmd)
-    local a, b, c = os.execute(cmd)
-    if not shellSucceeded(a, b, c) then
-        local err = readFileMaybe(errLog) or readFileMaybe(workdir .. "/convert_stderr.txt")
-        error(
-            string.format(
-                "runtime PNG conversion failed (host exit: %s %s %s). %s",
-                tostring(a),
-                tostring(b),
-                tostring(c),
-                err and ("Python/gbagfx stderr:\n" .. err) or "See " .. errLog
-            )
+    _dbg(
+        string.format(
+            "applyRuntimePngPair: hostPngPairToLzWorkdir repo=%s work=%s",
+            repoRoot,
+            workdir
         )
-    end
+    )
+    hostPngPairToLzWorkdir(repoRoot, frontPng, backPng, workdir, errLog)
     local manPath = workdir .. "/manifest.txt"
     local mf = io.open(manPath, "r")
     if not mf then
-        local err = readFileMaybe(errLog)
-        error(
-            string.format(
-                "no manifest at %s after convert. Re-run from a terminal: cd %q && python3 %q --front %q --back %q --workdir %q\n%s",
-                manPath,
-                repoRoot,
-                py,
-                frontPng,
-                backPng,
-                workdir,
-                err and ("Last stderr:\n" .. err) or "(no stderr captured; check python3, gbagfx, PNG paths)"
-            )
-        )
+        error("no manifest at " .. manPath)
     end
     local man = parseManifestText(mf:read("*a") or "")
     mf:close()
@@ -406,7 +479,7 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
     local plz = man.PAL_LZ
     local slz = man.SHINY_LZ
     if not flz or not blz or not plz or not slz then
-        error("bad manifest.txt from runtime_reserved_png_to_lz.py")
+        error("bad manifest.txt after host PNG conversion")
     end
     if flz > layout.maxFrontLz or blz > layout.maxBackLz or plz > layout.maxPalLz or slz > layout.maxShinyPalLz then
         error(
@@ -546,7 +619,7 @@ do
     if info and info.source and info.source:sub(1, 1) == "@" then
         local p = info.source:sub(2)
         local dir = (p:gsub("[/\\][^/\\]*$", ""))
-        M._REPO_ROOT = dir .. "/../.."
+        M._REPO_ROOT = dir .. "/.."
     end
 end
 

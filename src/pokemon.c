@@ -5841,10 +5841,13 @@ u16 SpeciesToPokedexNum(u16 species)
         return 0;
 
 #if NUM_RESERVED_CUSTOM_SPECIES > 0
-    // Regional-dex mode hides Johto+ numbers as "???", but reserved custom species use national
-    // numbers past vanilla (413+). Still show their real number in the party summary UI.
     if (nationalNum >= NATIONAL_DEX_RESERVED_CUSTOM_FIRST && nationalNum <= NATIONAL_DEX_RESERVED_CUSTOM_LAST)
-        return nationalNum;
+    {
+        if (IsNationalPokedexEnabled())
+            return nationalNum;
+        // Regional mode: show reserved as 152, 153, ... after Kanto 001..151.
+        return (u16)(KANTO_DEX_COUNT + 1u + (nationalNum - NATIONAL_DEX_RESERVED_CUSTOM_FIRST));
+    }
 #endif
 
     if (!IsNationalPokedexEnabled() && nationalNum > KANTO_SPECIES_END)

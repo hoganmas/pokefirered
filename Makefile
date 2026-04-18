@@ -83,6 +83,10 @@ CPPFLAGS := $(INCLUDE_CPP_ARGS) -Wno-trigraphs -D$(GAME_VERSION) -DREVISION=$(GA
 ifeq ($(DEBUG_GIVE_RESERVED_SPECIES_NEWGAME),1)
 CPPFLAGS += -DDEBUG_GIVE_RESERVED_SPECIES_NEWGAME
 endif
+# Start with National Dex enabled on New Game: make firered DEBUG_ENABLE_NATIONAL_DEX_NEWGAME=1
+ifeq ($(DEBUG_ENABLE_NATIONAL_DEX_NEWGAME),1)
+CPPFLAGS += -DDEBUG_ENABLE_NATIONAL_DEX_NEWGAME
+endif
 ifeq ($(MODERN),0)
   CPPFLAGS += -I tools/agbcc/include -I tools/agbcc -nostdinc -undef -std=gnu89
   CC1 := tools/agbcc/bin/agbcc$(EXE)

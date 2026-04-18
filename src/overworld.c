@@ -1523,6 +1523,9 @@ void CB2_NewGame(void)
     StopMapMusic();
     ResetSafariZoneFlag_();
     NewGameInitData();
+#ifdef DEBUG_ENABLE_NATIONAL_DEX_NEWGAME
+    EnableNationalPokedex();
+#endif
 #ifdef DEBUG_GIVE_RESERVED_SPECIES_NEWGAME
     FlagSet(FLAG_SYS_POKEMON_GET);
     FlagSet(FLAG_SYS_POKEDEX_GET);

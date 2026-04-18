@@ -1,6 +1,7 @@
 #include "global.h"
 #include "pokedex.h"
 #include "pokedex_screen.h"
+#include "event_data.h"
 
 // Unused
 const u8 *GetPokedexCategoryName(u16 dexNum)
@@ -102,6 +103,28 @@ u16 GetKantoPokedexCount(u8 caseID)
             break;
         }
     }
+
+#if NUM_RESERVED_CUSTOM_SPECIES > 0
+    if (!IsNationalPokedexEnabled())
+    {
+        for (i = 0; i < NUM_RESERVED_CUSTOM_SPECIES; i++)
+        {
+            u16 ndex = NATIONAL_DEX_RESERVED_CUSTOM_FIRST + i;
+            switch (caseID)
+            {
+            case FLAG_GET_SEEN:
+                if (GetSetPokedexFlag(ndex, FLAG_GET_SEEN))
+                    count++;
+                break;
+            case FLAG_GET_CAUGHT:
+                if (GetSetPokedexFlag(ndex, FLAG_GET_CAUGHT))
+                    count++;
+                break;
+            }
+        }
+    }
+#endif
+
     return count;
 }
 

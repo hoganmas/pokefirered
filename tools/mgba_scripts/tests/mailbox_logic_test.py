@@ -10,7 +10,7 @@ from __future__ import annotations
 # --- sync with reserved_species_mailbox.lua / reserved_species.h ---
 MAGIC = 0x31505352
 TRAIL = 0x544C4252
-VERSION = 2
+VERSION = 3
 OFFSET_MAGIC = 0
 OFFSET_VERSION = 4
 OFFSET_COUNT = 6
@@ -30,8 +30,9 @@ OFFSET_RUNTIME_BACK_LZ = 52
 OFFSET_RUNTIME_PAL_LZ = 56
 OFFSET_RUNTIME_SHINY_PAL_LZ = 60
 OFFSET_MON_SHINY_PALETTE = 64
-OFFSET_TRAIL_MAGIC = 68
-MAILBOX_SIZE = 72
+OFFSET_RUNTIME_SCRATCH_END = 68
+OFFSET_TRAIL_MAGIC = 72
+MAILBOX_SIZE = 76
 
 
 class EmuShim:
@@ -74,6 +75,7 @@ def place_mailbox(mem: dict[int, int], base: int, **fields) -> None:
     mem[base + OFFSET_RUNTIME_PAL_LZ] = fields.get("runtimePalLzAddr", 0)
     mem[base + OFFSET_RUNTIME_SHINY_PAL_LZ] = fields.get("runtimeShinyPalLzAddr", 0)
     mem[base + OFFSET_MON_SHINY_PALETTE] = fields.get("monShinyPaletteTable", 0)
+    mem[base + OFFSET_RUNTIME_SCRATCH_END] = fields.get("runtimeRomScratchEndExclusive", 0)
     mem[base + OFFSET_TRAIL_MAGIC] = TRAIL
 
 

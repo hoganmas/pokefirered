@@ -268,7 +268,7 @@ leafgreen_modern:      ; @$(MAKE) GAME_VERSION=LEAFGREEN MODERN=1
 leafgreen_rev1_modern: ; @$(MAKE) GAME_VERSION=LEAFGREEN GAME_REVISION=1 MODERN=1
 
 # Scripting mailbox self-tests (Python: always; Lua: optional if lua5.4 / lua5.3 / lua is on PATH).
-.PHONY: test-mailbox-lua
+.PHONY: test-mailbox-lua test-mailbox-runtime
 test-mailbox-lua:
 	@python3 tools/mgba_scripts/tests/mailbox_logic_test.py
 	@for LUA in lua5.4 lua5.3 lua; do \
@@ -279,6 +279,17 @@ test-mailbox-lua:
 	done; \
 	echo "(optional) skipped Lua mirror test: install lua5.3+"; \
 	true
+
+# Runtime integration test: executes applyRuntimePngPair against an emu shim and real PNG->LZ conversion.
+test-mailbox-runtime:
+	@for LUA in lua5.4 lua5.3 lua; do \
+	  if command -v $$LUA >/dev/null 2>&1; then \
+	    $$LUA tools/mgba_scripts/runtime_png_integration_test.lua "$$(pwd)" && exit 0; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "missing Lua runtime (need lua5.3+ for test-mailbox-runtime)"; \
+	exit 1
 
 # Other rules
 include graphics_file_rules.mk

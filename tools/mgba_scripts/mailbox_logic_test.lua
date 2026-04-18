@@ -114,6 +114,7 @@ local function placeMailbox(mem, base, fields)
     mem[base + M.OFFSET_RUNTIME_PAL_LZ] = fields.runtimePalLzAddr or 0
     mem[base + M.OFFSET_RUNTIME_SHINY_PAL_LZ] = fields.runtimeShinyPalLzAddr or 0
     mem[base + M.OFFSET_MON_SHINY_PALETTE] = fields.monShinyPaletteTable or 0
+    mem[base + M.OFFSET_RUNTIME_SCRATCH_END] = fields.runtimeRomScratchEndExclusive or 0
     mem[base + M.OFFSET_TRAIL_MAGIC] = M.TRAIL
 end
 
@@ -173,6 +174,24 @@ end
 
 do
     assertEq(M.speciesInfoRowPtrFromBase(0x08000000, 5, 28), 0x08000000 + 5 * 28, "speciesInfoRowPtrFromBase")
+end
+
+do
+    local mb = {
+        runtimeFrontLzAddr = 0x08EB0000,
+        runtimeBackLzAddr = 0x08EB1000,
+        runtimePalLzAddr = 0x08EB2000,
+        runtimeShinyPalLzAddr = 0x08EB2100,
+        runtimeRomScratchEndExclusive = 0x08EB2300,
+    }
+    local lz, err = M.getRuntimeLzScratchLayout(mb)
+    if not lz then
+        fail(err or "getRuntimeLzScratchLayout")
+    end
+    assertEq(lz.maxFrontLz, 0x1000, "maxFrontLz")
+    assertEq(lz.maxBackLz, 0x1000, "maxBackLz")
+    assertEq(lz.maxPalLz, 0x100, "maxPalLz")
+    assertEq(lz.maxShinyPalLz, 0x200, "maxShinyPalLz")
 end
 
 do

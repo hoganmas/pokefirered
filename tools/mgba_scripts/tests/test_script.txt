@@ -1,0 +1,9 @@
+local base = 0x0203F470
+ReservedSpeciesMailbox.applyRuntimePngPair(
+  emu,
+  base,
+  412,  -- use the same species id as the reserved row you’re replacing (see below)
+  "/Users/hoganmastanduno/Desktop/sandbox/pokemon-sandbox/sprites/sprites/pokemon/versions/generation-iii/ruby-sapphire/250.png",
+  "/Users/hoganmastanduno/Desktop/sandbox/pokemon-sandbox/sprites/sprites/pokemon/versions/generation-iii/ruby-sapphire/back/250.png",
+  "/Users/hoganmastanduno/Desktop/sandbox/pokemon-sandbox/pokefirered"
+)

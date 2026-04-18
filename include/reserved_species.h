@@ -16,7 +16,7 @@
 struct ReservedSpeciesScriptMailbox
 {
     u32 magic; // RESERVED_SPECIES_MAILBOX_MAGIC
-    u16 version;
+    u16 version; // 3: runtimeRomScratchEndExclusive + LZ slot pointers (see getRuntimeLzScratchLayout in mailbox Lua)
     u16 count; // mirrors NUM_RESERVED_CUSTOM_SPECIES
     u32 speciesInfo;           // &gSpeciesInfo[0]
     u32 levelUpLearnsets;      // &gLevelUpLearnsets[0]
@@ -34,7 +34,9 @@ struct ReservedSpeciesScriptMailbox
     u32 runtimePalLzAddr;
     u32 runtimeShinyPalLzAddr;
     u32 monShinyPaletteTable;  // &gMonShinyPaletteTable[0]
-    u32 trailMagic;            // RESERVED_SPECIES_MAILBOX_TRAIL — verifies struct size for Lua scan
+    // One-past-end bus address for gReservedRuntimeRomLzScratch[] (Lua derives per-slot LZ max from gaps).
+    u32 runtimeRomScratchEndExclusive;
+    u32 trailMagic; // RESERVED_SPECIES_MAILBOX_TRAIL — verifies struct size for Lua scan
 };
 
 #define RESERVED_SPECIES_MAILBOX_MAGIC 0x31505352u // 'RSP1' when viewed as little-endian bytes
@@ -44,7 +46,8 @@ extern struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox;
 extern const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE];
 
 void ReservedSpecies_InitScriptMailbox(void);
-// Empty body; set an mGBA execution breakpoint here to run after the mailbox is filled.
+// Empty body; set an mGBA execution breakpoint here after boot — Lua reads gReservedSpeciesScriptMailbox
+// (including runtime LZ ROM pointers and runtimeRomScratchEndExclusive) from EWRAM; no fixed addresses in scripts.
 void ReservedSpecies_MgbaScriptHandshake(void);
 
 /*
@@ -52,8 +55,10 @@ void ReservedSpecies_MgbaScriptHandshake(void);
   ReservedSpeciesMailbox.attach() to scan EWRAM for magic+trail and read row pointers.
 
   Runtime PNG → LZ77 + ROM table patches (host-side convert, emu writes): ReservedSpeciesMailbox.applyRuntimePngPair(...)
+  Pass the real pokefirered path as the last arg (mGBA Lua); placeholder paths make conversion fail.
+  Slot addresses and max LZ sizes come from the mailbox (ReservedSpeciesMailbox.getRuntimeLzScratchLayout); do not hardcode ROM.
 
-  Tests (no emulator): make test-mailbox-lua
+  Tests (no emulator): make test-mailbox-lua, make test-mailbox-runtime
 */
 
 #endif // GUARD_RESERVED_SPECIES_H

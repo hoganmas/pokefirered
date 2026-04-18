@@ -1,7 +1,8 @@
 -- Reserved species / scripting mailbox helpers for mGBA Lua.
--- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 72 bytes.
+-- Byte layout must match struct ReservedSpeciesScriptMailbox (include/reserved_species.h), 76 bytes.
 --
 -- mGBA: Tools → Scripting → Load this file, then: ReservedSpeciesMailbox.attach()
+-- ROM patches use emu.memory.cart0 (etc.), not raw bus writes, to avoid "Unimplemented memory Store" on 0x08…
 -- Tests: make test-mailbox-lua
 
 local M = {}
@@ -18,11 +19,8 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 2
+M.VERSION = 3
 M.SPECIES_SHINY_TAG = 500
-M.RUNTIME_FRONT_LZ_CAP = 0x3000
-M.RUNTIME_BACK_LZ_CAP = 0x3000
-M.RUNTIME_PAL_LZ_CAP = 0x200
 
 M.OFFSET_MAGIC = 0
 M.OFFSET_VERSION = 4
@@ -43,9 +41,10 @@ M.OFFSET_RUNTIME_BACK_LZ = 52
 M.OFFSET_RUNTIME_PAL_LZ = 56
 M.OFFSET_RUNTIME_SHINY_PAL_LZ = 60
 M.OFFSET_MON_SHINY_PALETTE = 64
-M.OFFSET_TRAIL_MAGIC = 68
+M.OFFSET_RUNTIME_SCRATCH_END = 68
+M.OFFSET_TRAIL_MAGIC = 72
 
-M.MAILBOX_SIZE = 72
+M.MAILBOX_SIZE = 76
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -59,7 +58,32 @@ local function r16(emu, addr)
     return emu:read16(addr)
 end
 
+-- GBA ROM is read-only on the CPU bus; mGBA logs "Unimplemented memory Store" for emu:write* to 0x08…
+-- Use the cartridge MemoryDomain (cart0/cart1/cart2) so patches apply without spamming stdout.
+-- See: mGBA scripting docs → Memory domains → cart0 (ROM @ 0x08000000).
+local GBA_ROM_CART0_BASE = 0x08000000
+local GBA_ROM_CART1_BASE = 0x0A000000
+local GBA_ROM_CART2_BASE = 0x0C000000
+
+local function romDomainAndOffset(addr)
+    if addr >= GBA_ROM_CART0_BASE and addr < GBA_ROM_CART1_BASE then
+        return "cart0", addr - GBA_ROM_CART0_BASE
+    end
+    if addr >= GBA_ROM_CART1_BASE and addr < GBA_ROM_CART2_BASE then
+        return "cart1", addr - GBA_ROM_CART1_BASE
+    end
+    if addr >= GBA_ROM_CART2_BASE and addr < 0x0E000000 then
+        return "cart2", addr - GBA_ROM_CART2_BASE
+    end
+    return nil
+end
+
 local function w32(emu, addr, value)
+    local domName, off = romDomainAndOffset(addr)
+    if domName and emu.memory and emu.memory[domName] and type(emu.memory[domName].write32) == "function" then
+        emu.memory[domName]:write32(off, value)
+        return
+    end
     if type(emu.write32) == "function" then
         emu:write32(addr, value)
         return
@@ -68,11 +92,45 @@ local function w32(emu, addr, value)
 end
 
 local function w8(emu, addr, value)
+    local domName, off = romDomainAndOffset(addr)
+    if domName and emu.memory and emu.memory[domName] and type(emu.memory[domName].write8) == "function" then
+        emu.memory[domName]:write8(off, value)
+        return
+    end
     if type(emu.write8) == "function" then
         emu:write8(addr, value)
         return
     end
     error("This mGBA Lua runtime does not expose emu:write8")
+end
+
+-- Lua 5.1: os.execute returns status number (0 = success).
+-- Lua 5.2+: returns true on success, or nil/false, "exit", code on failure.
+local function shellSucceeded(a, b, c)
+    if a == true then
+        return true
+    end
+    if type(a) == "number" then
+        return a == 0
+    end
+    return false
+end
+
+local function readFileMaybe(path)
+    local f = io.open(path, "r")
+    if not f then
+        return nil
+    end
+    local t = f:read("*a")
+    f:close()
+    return t
+end
+
+local function trimPath(s)
+    if not s then
+        return s
+    end
+    return (s:gsub("[/\\]+$", ""))
 end
 
 function M.readMailbox(emu, base)
@@ -95,7 +153,43 @@ function M.readMailbox(emu, base)
         runtimePalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_PAL_LZ),
         runtimeShinyPalLzAddr = r32(emu, base + M.OFFSET_RUNTIME_SHINY_PAL_LZ),
         monShinyPaletteTable = r32(emu, base + M.OFFSET_MON_SHINY_PALETTE),
+        runtimeRomScratchEndExclusive = r32(emu, base + M.OFFSET_RUNTIME_SCRATCH_END),
         trailMagic = r32(emu, base + M.OFFSET_TRAIL_MAGIC),
+    }
+end
+
+--- Derive per-slot max LZ sizes from C-filled pointers (no hardcoded ROM addresses or caps in Lua).
+-- @param mb table from readMailbox
+-- @return layout table, or nil, err
+function M.getRuntimeLzScratchLayout(mb)
+    if not mb then
+        return nil, "nil mailbox"
+    end
+    local a = mb.runtimeFrontLzAddr
+    local b = mb.runtimeBackLzAddr
+    local c = mb.runtimePalLzAddr
+    local d = mb.runtimeShinyPalLzAddr
+    local e = mb.runtimeRomScratchEndExclusive
+    if a == 0 or b == 0 or c == 0 or d == 0 then
+        return nil, "mailbox missing runtime LZ slot addresses (rebuild ROM / ReservedSpecies_InitScriptMailbox)"
+    end
+    if e == 0 then
+        return nil, "mailbox missing runtimeRomScratchEndExclusive (need mailbox version >= 3)"
+    end
+    if not (a < b and b < c and c < d and d < e) then
+        return nil, "runtime LZ addresses must be strictly ascending (front < back < pal < shiny < end)"
+    end
+    return {
+        scratchBase = a,
+        scratchEndExclusive = e,
+        frontAddr = a,
+        backAddr = b,
+        palAddr = c,
+        shinyPalAddr = d,
+        maxFrontLz = b - a,
+        maxBackLz = c - b,
+        maxPalLz = d - c,
+        maxShinyPalLz = e - d,
     }
 end
 
@@ -230,38 +324,82 @@ local function writeFileBytesToEmu(emu, addr, path)
 end
 
 --- Host-side PNG→LZ77 (python3 + tools/gbagfx), then patch ROM table rows to use ROM scratch LZ blobs (mailbox addresses).
--- frontPng/backPng: absolute or cwd-relative paths readable by python.
--- repoRoot: pokefirered root (contains tools/). Default: inferred from this script location.
+-- frontPng/backPng: host paths that mGBA can open (absolute paths are safest for the mGBA console).
+-- repoRoot: pokefirered root (must contain tools/runtime_reserved_png_to_lz.py and tools/gbagfx/gbagfx). Default: inferred from script path.
 function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot)
     local mb = M.readMailbox(emu, base)
     if mb.version ~= M.VERSION then
         error(string.format("mailbox version mismatch: got %d need %d", mb.version, M.VERSION))
     end
-    if mb.runtimeFrontLzAddr == 0 or mb.runtimeBackLzAddr == 0 then
-        error("mailbox missing runtime LZ staging addresses (rebuild ROM)")
+    local layout, lerr = M.getRuntimeLzScratchLayout(mb)
+    if not layout then
+        error(lerr or "bad runtime LZ layout")
     end
-    repoRoot = repoRoot or M._REPO_ROOT
+    repoRoot = trimPath(repoRoot or M._REPO_ROOT)
     if not repoRoot or #repoRoot == 0 then
-        error("repoRoot unset: pass applyRuntimePngPair(..., repoRoot) or ensure mailbox script path is known")
+        error("repoRoot unset: pass applyRuntimePngPair(..., lastArg=repoRoot as absolute path to pokefirered)")
     end
-    local workdir = repoRoot .. "/build/mgba_runtime_rsv_" .. tostring(os.time())
     local py = repoRoot .. "/tools/runtime_reserved_png_to_lz.py"
+    local fpy = io.open(py, "r")
+    if not fpy then
+        error(
+            "repoRoot is wrong (missing " .. py .. "). Pass the absolute path to the pokefirered project root, not a placeholder like /full/path/..."
+        )
+    end
+    fpy:close()
+    for label, p in pairs({ front = frontPng, back = backPng }) do
+        local pfd = io.open(p, "r")
+        if not pfd then
+            error("cannot read " .. label .. " PNG (open as host file failed): " .. tostring(p))
+        end
+        pfd:close()
+    end
+
+    local workdir = repoRoot .. "/build/mgba_runtime_rsv_" .. tostring(os.time())
+    local errLog = workdir .. "/convert_stderr.txt"
+    -- stderr to errLog for diagnostics; workdir is created in the same shell line first.
     local cmd = string.format(
-        "mkdir -p %q && cd %q && python3 %q --front %q --back %q --workdir %q",
+        "mkdir -p %q && cd %q && python3 %q --front %q --back %q --workdir %q 2>%q",
         workdir,
         repoRoot,
         py,
         frontPng,
         backPng,
-        workdir
+        workdir,
+        errLog
     )
     _dbg("applyRuntimePngPair: " .. cmd)
-    local st = os.execute(cmd)
-    if st == false or (type(st) == "number" and st ~= 0) then
-        error("runtime PNG conversion failed (python3 / gbagfx). status=" .. tostring(st))
+    local a, b, c = os.execute(cmd)
+    if not shellSucceeded(a, b, c) then
+        local err = readFileMaybe(errLog) or readFileMaybe(workdir .. "/convert_stderr.txt")
+        error(
+            string.format(
+                "runtime PNG conversion failed (host exit: %s %s %s). %s",
+                tostring(a),
+                tostring(b),
+                tostring(c),
+                err and ("Python/gbagfx stderr:\n" .. err) or "See " .. errLog
+            )
+        )
     end
-    local mf = assert(io.open(workdir .. "/manifest.txt", "r"))
-    local man = parseManifestText(mf:read("*a"))
+    local manPath = workdir .. "/manifest.txt"
+    local mf = io.open(manPath, "r")
+    if not mf then
+        local err = readFileMaybe(errLog)
+        error(
+            string.format(
+                "no manifest at %s after convert. Re-run from a terminal: cd %q && python3 %q --front %q --back %q --workdir %q\n%s",
+                manPath,
+                repoRoot,
+                py,
+                frontPng,
+                backPng,
+                workdir,
+                err and ("Last stderr:\n" .. err) or "(no stderr captured; check python3, gbagfx, PNG paths)"
+            )
+        )
+    end
+    local man = parseManifestText(mf:read("*a") or "")
     mf:close()
     local flz = man.FRONT_LZ
     local blz = man.BACK_LZ
@@ -270,8 +408,16 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
     if not flz or not blz or not plz or not slz then
         error("bad manifest.txt from runtime_reserved_png_to_lz.py")
     end
-    if flz > M.RUNTIME_FRONT_LZ_CAP or blz > M.RUNTIME_BACK_LZ_CAP or plz > M.RUNTIME_PAL_LZ_CAP or slz > M.RUNTIME_PAL_LZ_CAP then
-        error("converted LZ larger than ROM scratch caps; raise RESERVED_RUNTIME_*_CAP in reserved_species.h and rebuild")
+    if flz > layout.maxFrontLz or blz > layout.maxBackLz or plz > layout.maxPalLz or slz > layout.maxShinyPalLz then
+        error(
+            string.format(
+                "converted LZ larger than ROM scratch (max front=%u back=%u pal=%u shiny=%u); raise RESERVED_RUNTIME_*_CAP in reserved_species.h and rebuild",
+                layout.maxFrontLz,
+                layout.maxBackLz,
+                layout.maxPalLz,
+                layout.maxShinyPalLz
+            )
+        )
     end
     assert(writeFileBytesToEmu(emu, mb.runtimeFrontLzAddr, workdir .. "/front.4bpp.lz") == flz)
     assert(writeFileBytesToEmu(emu, mb.runtimeBackLzAddr, workdir .. "/back.4bpp.lz") == blz)
@@ -354,6 +500,8 @@ function M.attach()
         local base = tryFind()
         if base then
             _attachState.base = base
+            -- mGBA console may run in a different VM than this script; mirror for REPL users.
+            rawset(_G, "ReservedSpeciesMailboxLastBase", base)
             callbacks:remove(_attachState.cbid)
             _attachState.cbid = nil
             local mb = M.readMailbox(emu, base)
@@ -363,6 +511,20 @@ function M.attach()
                 console:log(string.format("  targetSpecies=%u rowPtr=0x%08X", mb.targetSpecies, mb.speciesInfoRowPtr))
                 console:log(string.format("  learnsetEntryAddr=0x%08X", mb.levelUpLearnsetEntryAddr))
                 console:log(string.format("  rowPtrMatchesComputed=%s", tostring(M.rowPtrMatchesComputed(emu, base))))
+                local lz = M.getRuntimeLzScratchLayout(mb)
+                if lz then
+                    console:log(
+                        string.format(
+                            "  runtimeLz scratch=0x%08X..0x%08X maxLZ front=%u back=%u pal=%u shiny=%u",
+                            lz.scratchBase,
+                            lz.scratchEndExclusive,
+                            lz.maxFrontLz,
+                            lz.maxBackLz,
+                            lz.maxPalLz,
+                            lz.maxShinyPalLz
+                        )
+                    )
+                end
             end
         elseif frames > 720 then
             callbacks:remove(_attachState.cbid)
@@ -376,7 +538,7 @@ function M.attach()
 end
 
 function M.getAttachedBase()
-    return _attachState.base
+    return _attachState.base or rawget(_G, "ReservedSpeciesMailboxLastBase")
 end
 
 do

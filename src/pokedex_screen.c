@@ -21,6 +21,7 @@
 #include "pokedex_area_markers.h"
 #include "field_specials.h"
 #include "pokemon.h"
+#include "reserved_species.h"
 
 #define TAG_AREA_MARKERS 2001
 
@@ -2746,12 +2747,14 @@ void DexScreen_DexPageZoomEffectFrame(u8 bg, u8 scale)
 
 void DexScreen_PrintMonCategory(u8 windowId, u16 species, u8 x, u8 y)
 {
-    u8 * categoryName;
+    const u8 *categoryName;
+    const u8 *description;
     u8 index, categoryStr[12];
 
     species = SpeciesToNationalPokedexNum(species);
-
-    categoryName = (u8 *)gPokedexEntries[species].categoryName;
+    description = NULL;
+    categoryName = gPokedexEntries[species].categoryName;
+    ReservedSpecies_GetPokedexTextPtrsByNationalDex(species, &categoryName, &description);
     index = 0;
     if (DexScreen_GetSetPokedexFlag(species, FLAG_GET_CAUGHT, FALSE))
     {
@@ -2935,12 +2938,17 @@ void DexScreen_PrintMonFlavorText(u8 windowId, u16 species, u8 x, u8 y)
     struct TextPrinterTemplate printerTemplate;
     u16 length;
     s32 xCenter;
+    const u8 *categoryName;
+    const u8 *description;
 
     species = SpeciesToNationalPokedexNum(species);
+    categoryName = NULL;
+    description = gPokedexEntries[species].description;
+    ReservedSpecies_GetPokedexTextPtrsByNationalDex(species, &categoryName, &description);
 
     if (DexScreen_GetSetPokedexFlag(species, FLAG_GET_CAUGHT, FALSE))
     {
-        printerTemplate.currentChar = gPokedexEntries[species].description;
+        printerTemplate.currentChar = description;
         printerTemplate.windowId = windowId;
         printerTemplate.fontId = FONT_NORMAL;
         printerTemplate.letterSpacing = 1;
@@ -2950,7 +2958,7 @@ void DexScreen_PrintMonFlavorText(u8 windowId, u16 species, u8 x, u8 y)
         printerTemplate.bgColor = 0;
         printerTemplate.shadowColor = 2;
 
-        length = GetStringWidth(FONT_NORMAL, gPokedexEntries[species].description, 0);
+        length = GetStringWidth(FONT_NORMAL, description, 0);
         xCenter = x + (240 - length) / 2;
 
         if (xCenter > 0)

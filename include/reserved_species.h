@@ -11,6 +11,9 @@
 #define RESERVED_RUNTIME_ROM_SCRATCH_SIZE \
     (RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP)
 
+#define RESERVED_POKEDEX_CATEGORY_TEXT_LEN 11u
+#define RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN 255u
+
 // Written once at boot for external tooling (mGBA Lua, etc.). Bus addresses (0x08… ROM, 0x02… EWRAM).
 // Layout is duplicated in scripts/reserved_species_mailbox.lua (OFFSET_*).
 struct ReservedSpeciesScriptMailbox
@@ -44,8 +47,11 @@ struct ReservedSpeciesScriptMailbox
 
 extern struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox;
 extern const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE];
+extern const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1];
+extern const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1];
 
 void ReservedSpecies_InitScriptMailbox(void);
+bool8 ReservedSpecies_GetPokedexTextPtrsByNationalDex(u16 nationalDex, const u8 **outCategory, const u8 **outDescription);
 // Empty body; set an mGBA execution breakpoint here after boot — Lua reads gReservedSpeciesScriptMailbox
 // (including runtime LZ ROM pointers and runtimeRomScratchEndExclusive) from EWRAM; no fixed addresses in scripts.
 void ReservedSpecies_MgbaScriptHandshake(void);

@@ -3,13 +3,47 @@
 #include "pokemon.h"
 #include "data.h" // gMonShinyPaletteTable
 #include "constants/reserved_species_config.h"
+#include "constants/pokedex.h"
 
 EWRAM_DATA struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox = {0};
+const u8 gReservedSpeciesPokedexCategory[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_CATEGORY_TEXT_LEN + 1] = {0};
+const u8 gReservedSpeciesPokedexDescription[NUM_RESERVED_CUSTOM_SPECIES][RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN + 1] = {0};
 
 // Emulator/runtime scripting may overwrite these ROM bytes (not possible on a real cartridge).
 ALIGNED(4) const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE] __attribute__((section(".rom_runtime_lz"))) = {0};
 
 STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 76, ReservedSpeciesMailboxLayout);
+
+static s16 ReservedSpecies_NdexToSlot(u16 nationalDex)
+{
+    if (nationalDex < NATIONAL_DEX_RESERVED_CUSTOM_FIRST || nationalDex > NATIONAL_DEX_RESERVED_CUSTOM_LAST)
+        return -1;
+    return (s16)(nationalDex - NATIONAL_DEX_RESERVED_CUSTOM_FIRST);
+}
+
+bool8 ReservedSpecies_GetPokedexTextPtrsByNationalDex(u16 nationalDex, const u8 **outCategory, const u8 **outDescription)
+{
+    bool8 any = FALSE;
+    s16 slot = ReservedSpecies_NdexToSlot(nationalDex);
+
+    if (slot < 0)
+        return FALSE;
+    if (outCategory != NULL
+        && gReservedSpeciesPokedexCategory[slot][0] != 0
+        && gReservedSpeciesPokedexCategory[slot][0] != 0xFF)
+    {
+        *outCategory = gReservedSpeciesPokedexCategory[slot];
+        any = TRUE;
+    }
+    if (outDescription != NULL
+        && gReservedSpeciesPokedexDescription[slot][0] != 0
+        && gReservedSpeciesPokedexDescription[slot][0] != 0xFF)
+    {
+        *outDescription = gReservedSpeciesPokedexDescription[slot];
+        any = TRUE;
+    }
+    return any;
+}
 
 void ReservedSpecies_InitScriptMailbox(void)
 {

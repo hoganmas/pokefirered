@@ -131,8 +131,12 @@ local function normalize_fixture(n)
         end
     end
     local icon_png = png_paths.icon
+    local footprint_png = png_paths.footprint
     if icon_png and not file_exists(tostring(icon_png)) then
         error("missing fixture png: " .. tostring(icon_png))
+    end
+    if footprint_png and not file_exists(tostring(footprint_png)) then
+        error("missing fixture png: " .. tostring(footprint_png))
     end
 
     local stats = default_species_info_fields()
@@ -144,6 +148,12 @@ local function normalize_fixture(n)
             end
         end
     end
+
+    local pokedex_entry = raw.pokedexEntry
+    if pokedex_entry ~= nil and type(pokedex_entry) ~= "table" then
+        error("pokedexEntry must be a table when provided")
+    end
+    pokedex_entry = pokedex_entry or {}
 
     return {
         name = name,
@@ -158,6 +168,18 @@ local function normalize_fixture(n)
             front = tostring(png_paths.front),
             back = tostring(png_paths.back),
             icon = icon_png and tostring(icon_png) or nil,
+            footprint = footprint_png and tostring(footprint_png) or nil,
+        },
+        pokedexEntry = {
+            categoryName = string.sub(tostring(pokedex_entry.categoryName or "CUSTOM"), 1, 11),
+            height = tonumber(pokedex_entry.height) or 7,
+            weight = tonumber(pokedex_entry.weight) or 69,
+            descriptionSymbol = tostring(pokedex_entry.descriptionSymbol or "gDummyPokedexText"),
+            unusedDescriptionSymbol = tostring(pokedex_entry.unusedDescriptionSymbol or "gDummyPokedexTextUnused"),
+            pokemonScale = tonumber(pokedex_entry.pokemonScale) or 256,
+            pokemonOffset = tonumber(pokedex_entry.pokemonOffset) or 0,
+            trainerScale = tonumber(pokedex_entry.trainerScale) or 256,
+            trainerOffset = tonumber(pokedex_entry.trainerOffset) or 0,
         },
     }
 end
@@ -183,6 +205,17 @@ local function make_debug_slot0_fixture()
         speciesInfo = st,
         nationalDex = "NATIONAL_DEX_RESERVED_CUSTOM_FIRST",
         hoennDex = "HOENN_DEX_NONE",
+        pokedexEntry = {
+            categoryName = "CUSTOM",
+            height = 7,
+            weight = 69,
+            descriptionSymbol = "gDummyPokedexText",
+            unusedDescriptionSymbol = "gDummyPokedexTextUnused",
+            pokemonScale = 256,
+            pokemonOffset = 0,
+            trainerScale = 256,
+            trainerOffset = 0,
+        },
     }
 end
 
@@ -266,7 +299,7 @@ local function copy_file(src, dst)
     outf:close()
 end
 
-local function write_reserved_custom_graphics_inc(banner, enable_slot0_custom)
+local function write_reserved_custom_graphics_inc(banner, enable_slot0_custom, enable_slot0_footprint_custom)
     local path = OUT_DIR .. "/reserved_custom_graphics.inc"
     if not enable_slot0_custom then
         write_if_changed(path, banner)
@@ -278,6 +311,9 @@ local function write_reserved_custom_graphics_inc(banner, enable_slot0_custom)
         .. 'const u32 gMonPalette_ReservedSlot0[] = INCBIN_U32("graphics/pokemon/reserved_slot0/normal.gbapal.lz");\n'
         .. 'const u32 gMonShinyPalette_ReservedSlot0[] = INCBIN_U32("graphics/pokemon/reserved_slot0/shiny.gbapal.lz");\n'
         .. 'const u8 gMonIcon_ReservedSlot0[] = INCBIN_U8("graphics/pokemon/reserved_slot0/icon.4bpp");\n'
+    if enable_slot0_footprint_custom then
+        body = body .. 'const u8 gMonFootprint_ReservedSlot0[] = INCBIN_U8("graphics/pokemon/reserved_slot0/footprint.1bpp");\n'
+    end
     write_if_changed(path, body)
 end
 
@@ -308,24 +344,36 @@ local function materialize_slot0_fixture_assets(fixture)
     copy_file(out_dir .. "/normal.gbapal", out_dir .. "/shiny.gbapal")
     copy_file(out_dir .. "/normal.gbapal.lz", out_dir .. "/shiny.gbapal.lz")
 
-    -- Party menu icon: 32×32 (16 tiles). From optional pngPaths.icon, else top-left 32×32 of front.png.
+    -- Party menu icon: 2-frame 32x32 icon sheet (32 tiles total). From optional pngPaths.icon,
+    -- else top-left 32x32 of front.png (frame 0; frame 1 becomes blank/padded by gbagfx).
     local icon_src = front_png
     local icon_png = png_paths.icon
     if type(icon_png) == "string" and file_exists(icon_png) then
         copy_file(icon_png, out_dir .. "/icon.png")
         icon_src = out_dir .. "/icon.png"
     end
-    run_cmd(string.format("%q %q %q %s", gfx, icon_src, out_dir .. "/icon.4bpp", "-num_tiles 16"))
+    run_cmd(string.format("%q %q %q %s", gfx, icon_src, out_dir .. "/icon.4bpp", "-num_tiles 32"))
+
+    -- Footprint: optional pngPaths.footprint (16x16 recommended), converted to 1bpp footprint tiles.
+    local footprint_png = png_paths.footprint
+    if type(footprint_png) == "string" and file_exists(footprint_png) then
+        copy_file(footprint_png, out_dir .. "/footprint.png")
+        run_cmd(string.format("%q %q %q %s", gfx, out_dir .. "/footprint.png", out_dir .. "/footprint.1bpp", "-num_tiles 4"))
+        fixture.footprintAssetSymbol = "ReservedSlot0"
+        fixture.useCustomGeneratedSlot0Footprint = true
+    else
+        fixture.footprintAssetSymbol = "Bulbasaur"
+        fixture.useCustomGeneratedSlot0Footprint = false
+    end
 
     fixture.assetSymbol = "ReservedSlot0"
     fixture.iconAssetSymbol = "ReservedSlot0"
-    fixture.footprintAssetSymbol = "Bulbasaur"
     fixture.iconPaletteIndex = 0
     fixture.useCustomGeneratedSlot0Graphics = true
     return fixture
 end
 
-local function write_reserved_pokedex_aux(n, banner)
+local function write_reserved_pokedex_aux(n, banner, fixture)
     if n <= 0 then
         return
     end
@@ -337,29 +385,53 @@ local function write_reserved_pokedex_aux(n, banner)
 
     local entries = {}
     for i = 0, n - 1 do
-        local height, weight
+        local category_name = "CUSTOM"
+        local height, weight = 1, 1
+        local description_symbol = "gDummyPokedexText"
+        local unused_description_symbol = "gDummyPokedexTextUnused"
+        local pokemon_scale = 256
+        local pokemon_offset = 0
+        local trainer_scale = 256
+        local trainer_offset = 0
         if i == 0 then
             height, weight = 7, 69
-        else
-            height, weight = 1, 1
+            if fixture and fixture.pokedexEntry then
+                local pe = fixture.pokedexEntry
+                category_name = string.gsub(tostring(pe.categoryName or category_name), '"', "")
+                height = tonumber(pe.height) or height
+                weight = tonumber(pe.weight) or weight
+                description_symbol = tostring(pe.descriptionSymbol or description_symbol)
+                unused_description_symbol = tostring(pe.unusedDescriptionSymbol or unused_description_symbol)
+                pokemon_scale = tonumber(pe.pokemonScale) or pokemon_scale
+                pokemon_offset = tonumber(pe.pokemonOffset) or pokemon_offset
+                trainer_scale = tonumber(pe.trainerScale) or trainer_scale
+                trainer_offset = tonumber(pe.trainerOffset) or trainer_offset
+            end
         end
         entries[#entries + 1] = string.format(
             [[    [(NATIONAL_DEX_RESERVED_CUSTOM_FIRST + %d)] =
     {
-        .categoryName = _("CUSTOM"),
+        .categoryName = _("%s"),
         .height = %d,
         .weight = %d,
-        .description = gDummyPokedexText,
-        .unusedDescription = gDummyPokedexTextUnused,
-        .pokemonScale = 256,
-        .pokemonOffset = 0,
-        .trainerScale = 256,
-        .trainerOffset = 0,
+        .description = %s,
+        .unusedDescription = %s,
+        .pokemonScale = %d,
+        .pokemonOffset = %d,
+        .trainerScale = %d,
+        .trainerOffset = %d,
     },
 ]],
             i,
+            category_name,
             height,
-            weight
+            weight,
+            description_symbol,
+            unused_description_symbol,
+            pokemon_scale,
+            pokemon_offset,
+            trainer_scale,
+            trainer_offset
         )
     end
     write_if_changed(OUT_DIR .. "/reserved_pokedex_entries.inc", banner .. table.concat(entries))
@@ -396,7 +468,11 @@ local function main()
         n
     )
 
-    write_reserved_custom_graphics_inc(banner, fixture and fixture.useCustomGeneratedSlot0Graphics)
+    write_reserved_custom_graphics_inc(
+        banner,
+        fixture and fixture.useCustomGeneratedSlot0Graphics,
+        fixture and fixture.useCustomGeneratedSlot0Footprint
+    )
 
     local body = {}
     for i = 0, n - 1 do
@@ -538,7 +614,7 @@ local function main()
     write_if_changed(OUT_DIR .. "/reserved_pokedex_hoenn.inc", banner .. table.concat(dex_h))
     write_if_changed(OUT_DIR .. "/reserved_pokedex_national.inc", banner .. table.concat(dex_n))
 
-    write_reserved_pokedex_aux(n, banner)
+    write_reserved_pokedex_aux(n, banner, fixture)
 end
 
 main()

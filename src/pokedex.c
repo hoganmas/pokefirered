@@ -1,11 +1,16 @@
 #include "global.h"
 #include "pokedex.h"
 #include "pokedex_screen.h"
+#include "reserved_species.h"
 #include "event_data.h"
 
 // Unused
 const u8 *GetPokedexCategoryName(u16 dexNum)
 {
+    const u8 *categoryName = NULL;
+
+    if (ReservedSpecies_GetPokedexTextPtrsByNationalDex(dexNum, &categoryName, NULL))
+        return categoryName;
     return gPokedexEntries[dexNum].categoryName;
 }
 

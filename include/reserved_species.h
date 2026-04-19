@@ -23,6 +23,8 @@ struct NewPokemonInfo
 {
     u16 prevEvolutionSpecies;
     u8 promptText[NEW_POKEMON_PROMPT_TEXT_LEN + 1];
+    // Written by host/Lua before setting the pending slot to NEW_POKEMON_REQ_DONE (SPECIES_NONE = no evolution).
+    u16 resultSpecies;
 };
 
 enum NewPokemonRequestStatus
@@ -92,6 +94,8 @@ extern const u16 gReservedRuntimeLevelUpLearnsets[NUM_RESERVED_CUSTOM_SPECIES][M
 
 void ReservedSpecies_InitScriptMailbox(void);
 bool8 ReservedSpecies_GetPokedexTextPtrsByNationalDex(u16 nationalDex, const u8 **outCategory, const u8 **outDescription);
+// Returns slot index 0..NEW_POKEMON_PENDING_MAX-1, or 0xFF if no free slot.
+u8 ReservedSpecies_AllocPendingNewPokemonRequest(void);
 // Empty body; set an mGBA execution breakpoint here after boot — Lua reads gReservedSpeciesScriptMailbox
 // (including runtime LZ ROM pointers and runtimeRomScratchEndExclusive) from EWRAM; no fixed addresses in scripts.
 void ReservedSpecies_MgbaScriptHandshake(void);
@@ -99,6 +103,10 @@ void ReservedSpecies_MgbaScriptHandshake(void);
 /*
   mGBA: load scripts/reserved_species_mailbox.lua (Scripting window), then
   ReservedSpeciesMailbox.attach() to scan EWRAM for magic+trail and read row pointers.
+  Prompt Stone: host writes gNewPokemonInfo.resultSpecies (0 = no evolution), then sets the pending
+  slot status to NEW_POKEMON_REQ_DONE or FAILED. Optional: PROMPT_STONE_AUTO_STUB in
+  scripts/reserved_species_mailbox.lua logs PENDING rows and auto-fills a reserved species slot by cloning
+  the party mon's ROM tables into the next slot, sets the name from the prompt, then marks DONE.
 
   Runtime PNG → LZ77 + ROM table patches (host-side convert, emu writes): ReservedSpeciesMailbox.applyRuntimePngPair(...)
   Pass the real pokefirered path as the last arg (mGBA Lua); placeholder paths make conversion fail.

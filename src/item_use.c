@@ -412,6 +412,12 @@ void FieldUseFunc_Medicine(u8 taskId)
     DoSetUpItemUseCallback(taskId);
 }
 
+void FieldUseFunc_PromptStone(u8 taskId)
+{
+    gItemUseCB = ItemUseCB_PromptStone;
+    DoSetUpItemUseCallback(taskId);
+}
+
 void FieldUseFunc_Ether(u8 taskId)
 {
     gItemUseCB = ItemUseCB_TryRestorePP;

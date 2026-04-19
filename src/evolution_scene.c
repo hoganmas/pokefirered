@@ -631,6 +631,17 @@ enum {
 // Task data from CycleEvolutionMonSprite
 #define tEvoStopped data[8]
 
+// Regional-dex gate normally blocks evolutions into species above Kanto (e.g. Crobat) until National Dex.
+// Reserved custom species IDs (after CHIMECHO, before EGG) are local placeholders and must still evolve.
+static bool8 PostEvoSpeciesBlockedWithoutNationalDex(u16 species)
+{
+    if (species <= SPECIES_MEW)
+        return FALSE;
+    if (species > SPECIES_CHIMECHO && species < SPECIES_EGG)
+        return FALSE;
+    return TRUE;
+}
+
 static void Task_EvolutionScene(u8 taskId)
 {
     u32 var;
@@ -640,7 +651,7 @@ static void Task_EvolutionScene(u8 taskId)
     // yet unlocked, such as Crobat.
     if (!IsNationalPokedexEnabled()
         && gTasks[taskId].tState == EVOSTATE_WAIT_CYCLE_MON_SPRITE
-        && gTasks[taskId].tPostEvoSpecies > SPECIES_MEW)
+        && PostEvoSpeciesBlockedWithoutNationalDex(gTasks[taskId].tPostEvoSpecies))
     {
         gTasks[taskId].tState = EVOSTATE_CANCEL;
         gTasks[taskId].tEvoWasStopped = TRUE;
@@ -1098,7 +1109,7 @@ static void Task_TradeEvolutionScene(u8 taskId)
     // yet unlocked, such as Crobat.
     if (!IsNationalPokedexEnabled()
         && gTasks[taskId].tState == T_EVOSTATE_WAIT_CYCLE_MON_SPRITE
-        && gTasks[taskId].tPostEvoSpecies > SPECIES_MEW)
+        && PostEvoSpeciesBlockedWithoutNationalDex(gTasks[taskId].tPostEvoSpecies))
     {
         gTasks[taskId].tState = EVOSTATE_TRY_LEARN_MOVE;
         gTasks[taskId].tEvoWasStopped = TRUE;

@@ -20,6 +20,7 @@
 #include "fldeff.h"
 #include "heal_location.h"
 #include "help_system.h"
+#include "item.h"
 #include "link.h"
 #include "link_rfu.h"
 #include "load_save.h"
@@ -1537,6 +1538,18 @@ void CB2_NewGame(void)
         GetSetPokedexFlag(nd, FLAG_SET_CAUGHT);
     }
     ScriptGiveMon(SPECIES_CHIMECHO + 1, 5, ITEM_NONE, 0, 0, 0);
+#endif
+#ifdef DEBUG_PROMPT_STONE_NEWGAME
+    FlagSet(FLAG_SYS_POKEMON_GET);
+    FlagSet(FLAG_SYS_POKEDEX_GET);
+    {
+        u16 nd = SpeciesToNationalPokedexNum(SPECIES_BULBASAUR);
+
+        GetSetPokedexFlag(nd, FLAG_SET_SEEN);
+        GetSetPokedexFlag(nd, FLAG_SET_CAUGHT);
+    }
+    ScriptGiveMon(SPECIES_BULBASAUR, 5, ITEM_NONE, 0, 0, 0);
+    AddBagItem(ITEM_PROMPT_STONE, 99);
 #endif
     ResetInitialPlayerAvatarState();
     PlayTimeCounter_Start();

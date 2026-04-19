@@ -5,6 +5,8 @@
 #include "constants/reserved_species_config.h"
 #include "constants/pokedex.h"
 
+EWRAM_DATA static u32 sNextNewPokemonRequestId = 1;
+
 EWRAM_DATA struct ReservedSpeciesScriptMailbox gReservedSpeciesScriptMailbox = {0};
 EWRAM_DATA struct NewPokemonInfo gNewPokemonInfo = {0};
 EWRAM_DATA struct NewPokemonPendingSlot gNewPokemonPending[NEW_POKEMON_PENDING_MAX] = {0};
@@ -24,6 +26,27 @@ static s16 ReservedSpecies_NdexToSlot(u16 nationalDex)
     if (nationalDex < NATIONAL_DEX_RESERVED_CUSTOM_FIRST || nationalDex > NATIONAL_DEX_RESERVED_CUSTOM_LAST)
         return -1;
     return (s16)(nationalDex - NATIONAL_DEX_RESERVED_CUSTOM_FIRST);
+}
+
+u8 ReservedSpecies_AllocPendingNewPokemonRequest(void)
+{
+    u32 i;
+
+    if (sNextNewPokemonRequestId == 0) // EWRAM can be zero before .data init in some loads
+        sNextNewPokemonRequestId = 1;
+
+    for (i = 0; i < NEW_POKEMON_PENDING_MAX; i++)
+    {
+        if (gNewPokemonPending[i].status == NEW_POKEMON_REQ_EMPTY
+            || gNewPokemonPending[i].status == NEW_POKEMON_REQ_DONE
+            || gNewPokemonPending[i].status == NEW_POKEMON_REQ_FAILED)
+        {
+            gNewPokemonPending[i].requestId = sNextNewPokemonRequestId++;
+            gNewPokemonPending[i].status = NEW_POKEMON_REQ_PENDING;
+            return (u8)i;
+        }
+    }
+    return 0xFF;
 }
 
 bool8 ReservedSpecies_GetPokedexTextPtrsByNationalDex(u16 nationalDex, const u8 **outCategory, const u8 **outDescription)

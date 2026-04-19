@@ -2110,6 +2110,16 @@ static const struct NamingScreenTemplate sRivalNamingScreenTemplate = {
     .title = gText_RivalsName,
 };
 
+// Up to 15 chars + EOS; fits naming screen internal buffers (see sMonNamingScreenTemplate).
+static const struct NamingScreenTemplate sPromptStoneNamingScreenTemplate = {
+    .copyExistingString = FALSE,
+    .maxChars = 15,
+    .iconFunction = 3,
+    .addGenderIcon = 1,
+    .initialPage = KBPAGE_LETTERS_UPPER,
+    .title = gText_PromptStoneEnterPrompt,
+};
+
 static const struct NamingScreenTemplate *const sNamingScreenTemplates[] =
 {
     [NAMING_SCREEN_PLAYER]     = &sPlayerNamingScreenTemplate,
@@ -2117,6 +2127,7 @@ static const struct NamingScreenTemplate *const sNamingScreenTemplates[] =
     [NAMING_SCREEN_CAUGHT_MON] = &sMonNamingScreenTemplate,
     [NAMING_SCREEN_NICKNAME]   = &sMonNamingScreenTemplate,
     [NAMING_SCREEN_RIVAL]      = &sRivalNamingScreenTemplate,
+    [NAMING_SCREEN_PROMPT_STONE] = &sPromptStoneNamingScreenTemplate,
 };
 
 static const struct OamData sOam_8x8 = {

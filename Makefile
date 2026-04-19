@@ -87,6 +87,10 @@ endif
 ifeq ($(DEBUG_ENABLE_NATIONAL_DEX_NEWGAME),1)
 CPPFLAGS += -DDEBUG_ENABLE_NATIONAL_DEX_NEWGAME
 endif
+# New Game: Bulbasaur in party + PROMPT STONE in bag: make firered DEBUG_PROMPT_STONE_NEWGAME=1
+ifeq ($(DEBUG_PROMPT_STONE_NEWGAME),1)
+CPPFLAGS += -DDEBUG_PROMPT_STONE_NEWGAME
+endif
 ifeq ($(MODERN),0)
   CPPFLAGS += -I tools/agbcc/include -I tools/agbcc -nostdinc -undef -std=gnu89
   CC1 := tools/agbcc/bin/agbcc$(EXE)

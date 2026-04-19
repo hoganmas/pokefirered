@@ -65,12 +65,55 @@ M.NEW_POKEMON_PENDING_MAX = 4
 M.NEW_POKEMON_PROMPT_TEXT_LEN = 127
 M.OFFSET_NPI_PREV_EVOLUTION_SPECIES = 0
 M.OFFSET_NPI_PROMPT_TEXT = 2
+M.OFFSET_NPI_RESULT_SPECIES = 130 -- u16; host writes before marking slot DONE (0 = no evolution scene)
 M.OFFSET_NPP_STATUS = 0
 M.OFFSET_NPP_REQUEST_ID = 4
+M.NEW_POKEMON_REQ_PENDING = 1
+M.NEW_POKEMON_REQ_DONE = 3
+M.NEW_POKEMON_REQ_FAILED = 4
+-- When true, mGBA Lua picks the next reserved species slot, clones ROM tables from the party mon's species
+-- into that slot (stats, learnset pointer, front/back palettes), sets the species name from the prompt text,
+-- writes resultSpecies, and marks DONE so the evolution scene can run without external tooling.
+M.PROMPT_STONE_AUTO_STUB = true
+-- Skip this many low reserved slots for Prompt Stone (slot 0 is often the build fixture, e.g. NEXOMON).
+M.PROMPT_STONE_SKIP_INITIAL_RESERVED_SLOTS = 1
+-- After cloning stats from the party mon, replace battle sprites with a random RS Gen III PNG pair (dex 1..386).
+M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES = true
+M.PROMPT_STONE_RS_SPRITE_DEX_MIN = 1
+M.PROMPT_STONE_RS_SPRITE_DEX_MAX = 386
+M.PROMPT_STONE_RS_SPRITE_PICK_TRIES = 48
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
 M.PALETTE_ENTRY_SIZE = 8
+
+-- Shared attach / Prompt Stone state (must be declared before any local function that indexes _attachState).
+local _attachState = { cbid = nil, base = nil, promptStoneSlotCursor = 0 }
+local _promptStonePollId = nil
+local _promptStoneLoggedReq = {}
+
+-- EWRAM bus range; memory.wram uses offsets from 0x02000000 (mGBA scripting docs).
+local GBA_EWRAM_BASE = 0x02000000
+local GBA_EWRAM_END = 0x03000000
+
+local function tryEwramRead8(emu, addr)
+    if addr < GBA_EWRAM_BASE or addr >= GBA_EWRAM_END then
+        return nil
+    end
+    local w = emu.memory and emu.memory.wram
+    if not w or type(w.read8) ~= "function" then
+        return nil
+    end
+    local off = addr - GBA_EWRAM_BASE
+    local sz = 0x40000
+    if type(w.size) == "function" then
+        sz = w:size()
+    end
+    if off < 0 or off >= sz then
+        return nil
+    end
+    return w:read8(off)
+end
 
 local function r32(emu, addr)
     return emu:read32(addr)
@@ -78,6 +121,66 @@ end
 
 local function r16(emu, addr)
     return emu:read16(addr)
+end
+
+local function r8(emu, addr)
+    local ew = tryEwramRead8(emu, addr)
+    if ew ~= nil then
+        return ew
+    end
+    if emu.read8 then
+        return emu:read8(addr)
+    end
+    return emu:read16(addr) % 256
+end
+
+-- Inverse of encodeGen3Text (rough ASCII view for console logs).
+local function decodeGen3ByteToChar(b)
+    if b == 0x00 then
+        return " "
+    end
+    if b == 0xFF or b == 0xFE then
+        return ""
+    end
+    if b >= 0xBB and b <= 0xD4 then
+        return string.char(string.byte("A") + (b - 0xBB))
+    end
+    if b >= 0xD5 and b <= 0xEE then
+        return string.char(string.byte("a") + (b - 0xD5))
+    end
+    if b >= 0xA1 and b <= 0xAA then
+        return string.char(string.byte("0") + (b - 0xA1))
+    end
+    if b == 0xAE then
+        return "-"
+    end
+    if b == 0xAD then
+        return "."
+    end
+    if b == 0xAC then
+        return "?"
+    end
+    return "?"
+end
+
+function M.readGen3StringFromEmu(emu, addr, maxChars)
+    local parts = {}
+    for i = 0, maxChars - 1 do
+        local b = r8(emu, addr + i)
+        if b == 0xFF or b == 0xFE then
+            break
+        end
+        parts[#parts + 1] = decodeGen3ByteToChar(b)
+    end
+    return table.concat(parts)
+end
+
+function M.readSpeciesNameFromTable(emu, speciesNamesBase, speciesId)
+    if speciesNamesBase == 0 then
+        return ""
+    end
+    local addr = speciesNamesBase + speciesId * M.SPECIES_NAME_STRIDE
+    return M.readGen3StringFromEmu(emu, addr, M.POKEMON_NAME_LENGTH)
 end
 
 -- GBA ROM is read-only on the CPU bus; mGBA logs "Unimplemented memory Store" for emu:write* to 0x08…
@@ -100,6 +203,54 @@ local function romDomainAndOffset(addr)
     return nil
 end
 
+-- EWRAM writes: same as reads — use memory.wram so the CPU sees updates (see tryEwramRead8 above).
+local function tryEwramWrite8(emu, addr, value)
+    value = value % 256
+    if addr < GBA_EWRAM_BASE or addr >= GBA_EWRAM_END then
+        return false
+    end
+    local w = emu.memory and emu.memory.wram
+    if not w or type(w.write8) ~= "function" then
+        return false
+    end
+    local off = addr - GBA_EWRAM_BASE
+    local sz = 0x40000
+    if type(w.size) == "function" then
+        sz = w:size()
+    end
+    if off < 0 or off >= sz then
+        return false
+    end
+    w:write8(off, value)
+    return true
+end
+
+local function tryEwramWrite16(emu, addr, value)
+    value = value % 65536
+    if addr < GBA_EWRAM_BASE or addr + 1 >= GBA_EWRAM_END then
+        return false
+    end
+    local w = emu.memory and emu.memory.wram
+    if not w then
+        return false
+    end
+    local off = addr - GBA_EWRAM_BASE
+    local sz = 0x40000
+    if type(w.size) == "function" then
+        sz = w:size()
+    end
+    if off < 0 or off + 1 >= sz then
+        return false
+    end
+    if type(w.write16) == "function" then
+        w:write16(off, value)
+    else
+        w:write8(off + 0, value % 256)
+        w:write8(off + 1, math.floor(value / 256) % 256)
+    end
+    return true
+end
+
 local function w32(emu, addr, value)
     local domName, off = romDomainAndOffset(addr)
     if domName and emu.memory and emu.memory[domName] and type(emu.memory[domName].write32) == "function" then
@@ -114,6 +265,9 @@ local function w32(emu, addr, value)
 end
 
 local function w8(emu, addr, value)
+    if tryEwramWrite8(emu, addr, value) then
+        return
+    end
     local domName, off = romDomainAndOffset(addr)
     if domName and emu.memory and emu.memory[domName] and type(emu.memory[domName].write8) == "function" then
         emu.memory[domName]:write8(off, value)
@@ -127,6 +281,9 @@ local function w8(emu, addr, value)
 end
 
 local function w16(emu, addr, value)
+    if tryEwramWrite16(emu, addr, value) then
+        return
+    end
     w8(emu, addr + 0, value % 256)
     w8(emu, addr + 1, math.floor(value / 256) % 256)
 end
@@ -324,6 +481,153 @@ function M.writeReservedSpeciesName(emu, base, slot, asciiName)
         console:log(string.format("[ReservedSpeciesMailbox] wrote name slot=%d species=%d addr=0x%08X", slot, speciesId, addr))
     end
     return addr
+end
+
+local function copyBusBytes(emu, dstAddr, srcAddr, len)
+    if dstAddr == srcAddr then
+        return
+    end
+    for i = 0, len - 1 do
+        w8(emu, dstAddr + i, r8(emu, srcAddr + i))
+    end
+end
+
+--- Clone Gen III ROM species definition from srcSpeciesId onto dstSpeciesId using mailbox pointers (stats, learnset ptr, battle gfx).
+-- Does not patch icon/cry tables (not exposed in the mailbox); cry for reserved IDs comes from the ROM table emitted at build time.
+function M.copyPokemonSpeciesTablesFromSource(emu, base, dstSpeciesId, srcSpeciesId)
+    if not srcSpeciesId or srcSpeciesId == 0 then
+        return false
+    end
+    if not dstSpeciesId or dstSpeciesId == 0 then
+        return false
+    end
+    local mb = M.readMailbox(emu, base)
+    local si = mb.sizeofSpeciesInfo
+    if not si or si == 0 or si > 512 then
+        return false
+    end
+    local sRow = mb.speciesInfo + srcSpeciesId * si
+    local dRow = mb.speciesInfo + dstSpeciesId * si
+    copyBusBytes(emu, dRow, sRow, si)
+
+    local lsrc = mb.levelUpLearnsets + srcSpeciesId * 4
+    local ldst = mb.levelUpLearnsets + dstSpeciesId * 4
+    w32(emu, ldst, r32(emu, lsrc))
+
+    copyBusBytes(
+        emu,
+        mb.monFrontPicTable + dstSpeciesId * M.SPRITE_SHEET_ENTRY_SIZE,
+        mb.monFrontPicTable + srcSpeciesId * M.SPRITE_SHEET_ENTRY_SIZE,
+        M.SPRITE_SHEET_ENTRY_SIZE
+    )
+    copyBusBytes(
+        emu,
+        mb.monBackPicTable + dstSpeciesId * M.SPRITE_SHEET_ENTRY_SIZE,
+        mb.monBackPicTable + srcSpeciesId * M.SPRITE_SHEET_ENTRY_SIZE,
+        M.SPRITE_SHEET_ENTRY_SIZE
+    )
+    copyBusBytes(
+        emu,
+        mb.monPaletteTable + dstSpeciesId * M.PALETTE_ENTRY_SIZE,
+        mb.monPaletteTable + srcSpeciesId * M.PALETTE_ENTRY_SIZE,
+        M.PALETTE_ENTRY_SIZE
+    )
+    copyBusBytes(
+        emu,
+        mb.monShinyPaletteTable + dstSpeciesId * M.PALETTE_ENTRY_SIZE,
+        mb.monShinyPaletteTable + srcSpeciesId * M.PALETTE_ENTRY_SIZE,
+        M.PALETTE_ENTRY_SIZE
+    )
+    return true
+end
+
+local function hostFileExists(path)
+    local f = io.open(path, "rb")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
+--- Paths to PokeAPI-style Gen III Ruby/Sapphire sprites (relative to pokefirered root: ../sprites/...).
+function M.getGen3RsSpritePngPaths(repoRoot, dexNum)
+    local r = trimPath(repoRoot or M._REPO_ROOT or ".")
+    local baseDir = r .. "/../sprites/sprites/pokemon/versions/generation-iii/ruby-sapphire"
+    local candidates = {
+        { baseDir .. "/" .. dexNum .. ".png", baseDir .. "/back/" .. dexNum .. ".png" },
+        {
+            baseDir .. "/" .. string.format("%03d", dexNum) .. ".png",
+            baseDir .. "/back/" .. string.format("%03d", dexNum) .. ".png",
+        },
+    }
+    for i = 1, #candidates do
+        local pair = candidates[i]
+        if hostFileExists(pair[1]) and hostFileExists(pair[2]) then
+            return pair[1], pair[2]
+        end
+    end
+    return nil, nil
+end
+
+local _promptStoneRngSeeded = false
+local function ensurePromptStoneRandomSeed()
+    if _promptStoneRngSeeded then
+        return
+    end
+    _promptStoneRngSeeded = true
+    local t = os.time() or 0
+    local c = 0
+    if os.clock then
+        c = math.floor(os.clock() * 1000000) % 100000
+    end
+    math.randomseed(t + c)
+end
+
+local function pickRandomRsDexWithSprites(repoRoot)
+    ensurePromptStoneRandomSeed()
+    local lo = M.PROMPT_STONE_RS_SPRITE_DEX_MIN or 1
+    local hi = M.PROMPT_STONE_RS_SPRITE_DEX_MAX or 386
+    local tries = M.PROMPT_STONE_RS_SPRITE_PICK_TRIES or 48
+    if hi < lo then
+        lo, hi = hi, lo
+    end
+    for _ = 1, tries do
+        local dex = math.random(lo, hi)
+        local a, b = M.getGen3RsSpritePngPaths(repoRoot, dex)
+        if a and b then
+            return dex, a, b
+        end
+    end
+    return nil, nil, nil
+end
+
+local function nextPromptStoneReservedSlotIndex(count)
+    local skip = M.PROMPT_STONE_SKIP_INITIAL_RESERVED_SLOTS or 0
+    if not count or count <= 0 then
+        return 0
+    end
+    if skip >= count then
+        skip = 0
+    end
+    local usable = count - skip
+    if usable <= 0 then
+        return 0
+    end
+    local idx = _attachState.promptStoneSlotCursor % usable
+    _attachState.promptStoneSlotCursor = _attachState.promptStoneSlotCursor + 1
+    return skip + idx
+end
+
+local function promptStoneDisplayNameFromPrompt(promptAscii)
+    if not promptAscii then
+        return nil
+    end
+    local s = tostring(promptAscii):gsub("^%s+", ""):gsub("%s+$", "")
+    if s == "" then
+        return nil
+    end
+    return s:sub(1, M.POKEMON_NAME_LENGTH)
 end
 
 local function writeAsciiEosStringToRom(emu, addr, text, maxChars)
@@ -747,7 +1051,120 @@ function M.rowPtrMatchesComputed(emu, base)
     return mb.speciesInfoRowPtr == computed
 end
 
-local _attachState = { cbid = nil, base = nil }
+--- Poll gNewPokemonPending from EWRAM; log PENDING rows and optionally auto-complete (see M.PROMPT_STONE_AUTO_STUB).
+function M.startPromptStonePendingPoll()
+    if _promptStonePollId ~= nil then
+        return
+    end
+    if not rawget(_G, "emu") or not rawget(_G, "callbacks") then
+        return
+    end
+    local emu = rawget(_G, "emu")
+    _promptStonePollId = callbacks:add("frame", function()
+        local base = _attachState.base
+        if not base then
+            return
+        end
+        local mb = M.readMailbox(emu, base)
+        local infoAddr = mb.newPokemonInfo
+        local pendAddr = mb.newPokemonPendingSlots
+        if infoAddr == 0 or pendAddr == 0 then
+            return
+        end
+        for slot = 0, M.NEW_POKEMON_PENDING_MAX - 1 do
+            local row = pendAddr + slot * M.NEW_POKEMON_PENDING_SLOT_SIZE
+            local st = r8(emu, row + M.OFFSET_NPP_STATUS)
+            if st == M.NEW_POKEMON_REQ_PENDING then
+                local prev = r16(emu, infoAddr + M.OFFSET_NPI_PREV_EVOLUTION_SPECIES)
+                local promptText = M.readGen3StringFromEmu(emu, infoAddr + M.OFFSET_NPI_PROMPT_TEXT, M.NEW_POKEMON_PROMPT_TEXT_LEN)
+                local reqId = r32(emu, row + M.OFFSET_NPP_REQUEST_ID)
+                local logKey = slot .. ":" .. reqId
+                if not _promptStoneLoggedReq[logKey] then
+                    _promptStoneLoggedReq[logKey] = true
+                    local spName = M.readSpeciesNameFromTable(emu, mb.speciesNames, prev)
+                    local line = string.format(
+                        "Prompt Stone: PENDING slot=%d requestId=%u speciesId=%u speciesName=%q prompt=%q",
+                        slot,
+                        reqId,
+                        prev,
+                        spName,
+                        promptText
+                    )
+                    if console and console.log then
+                        console:log("[ReservedSpeciesMailbox] " .. line)
+                    else
+                        _dbg(line)
+                    end
+                end
+                if M.PROMPT_STONE_AUTO_STUB == true then
+                    local count = mb.count
+                    if count and count > 0 then
+                        local rsSlot = nextPromptStoneReservedSlotIndex(count)
+                        local targetSpecies = M.getReservedSpeciesIdForSlot(emu, base, rsSlot)
+                        if prev ~= 0 then
+                            M.copyPokemonSpeciesTablesFromSource(emu, base, targetSpecies, prev)
+                        end
+                        local rndDex, rndFront, rndBack = nil, nil, nil
+                        if M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES == true then
+                            local repoRoot = trimPath(M._REPO_ROOT or ".")
+                            rndDex, rndFront, rndBack = pickRandomRsDexWithSprites(repoRoot)
+                            if rndFront and rndBack then
+                                local ok, err = pcall(function()
+                                    M.applyRuntimePngPair(emu, base, targetSpecies, rndFront, rndBack, repoRoot)
+                                end)
+                                if not ok then
+                                    if console and console.log then
+                                        console:log(
+                                            "[ReservedSpeciesMailbox] Prompt Stone: random RS sprites failed (using cloned tables only): "
+                                                .. tostring(err)
+                                        )
+                                    end
+                                end
+                            elseif console and console.log then
+                                console:log(
+                                    "[ReservedSpeciesMailbox] Prompt Stone: no RS sprite PNG pair found under ../sprites/... (stats clone only). dex search "
+                                        .. tostring(M.PROMPT_STONE_RS_SPRITE_PICK_TRIES)
+                                        .. " tries."
+                                )
+                            end
+                        end
+                        local disp = promptStoneDisplayNameFromPrompt(promptText)
+                        M.writeSpeciesNameById(emu, base, targetSpecies, disp or string.format("PKMN%d", rsSlot))
+                        w16(emu, infoAddr + M.OFFSET_NPI_RESULT_SPECIES, targetSpecies)
+                        w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_DONE)
+                        if console and console.log then
+                            if rndDex then
+                                console:log(
+                                    string.format(
+                                        "[ReservedSpeciesMailbox] Prompt Stone auto: reservedSlot=%d resultSpecies=%u prevSpecies=%u RS_dex=%u -> DONE",
+                                        rsSlot,
+                                        targetSpecies,
+                                        prev,
+                                        rndDex
+                                    )
+                                )
+                            else
+                                console:log(
+                                    string.format(
+                                        "[ReservedSpeciesMailbox] Prompt Stone auto: reservedSlot=%d resultSpecies=%u (cloned from species %u) -> DONE",
+                                        rsSlot,
+                                        targetSpecies,
+                                        prev
+                                    )
+                                )
+                            end
+                        end
+                    else
+                        w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                        if console and console.log then
+                            console:log("[ReservedSpeciesMailbox] Prompt Stone auto: mailbox count=0 -> FAILED")
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
 
 --- Narrow scan first (upper EWRAM), then full EWRAM. Logs once and removes the frame callback.
 function M.attach()
@@ -756,6 +1173,7 @@ function M.attach()
         if console and console.log then
             console:log(string.format("[ReservedSpeciesMailbox] already found base=0x%08X", _attachState.base))
         end
+        M.startPromptStonePendingPoll()
         return _attachState.base
     end
     if _attachState.cbid ~= nil then
@@ -801,6 +1219,7 @@ function M.attach()
                     )
                 end
             end
+            M.startPromptStonePendingPoll()
         elseif frames > 720 then
             callbacks:remove(_attachState.cbid)
             _attachState.cbid = nil

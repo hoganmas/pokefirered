@@ -35,6 +35,7 @@
 #include "new_menu_helpers.h"
 #include "metatile_behavior.h"
 #include "overworld.h"
+#include "prompt_stone.h"
 #include "party_menu.h"
 #include "player_pc.h"
 #include "pokedex.h"
@@ -4268,6 +4269,11 @@ static void Task_DoUseItemAnim(u8 taskId)
 
 static void CB2_DoUseItemAnim(void)
 {
+    if (gSpecialVar_ItemId == ITEM_PROMPT_STONE)
+    {
+        CB2_PromptStoneAfterPartyClose();
+        return;
+    }
     if (CheckIfItemIsTMHMOrEvolutionStone(gSpecialVar_ItemId) == 2) // Evolution stone
     {
         if (MonCanEvolve() == TRUE)
@@ -6322,6 +6328,14 @@ void ChoosePartyMonByMenuType(u8 menuType)
 {
     gFieldCallback2 = CB2_FadeFromPartyMenu;
     InitPartyMenu(menuType, PARTY_LAYOUT_SINGLE, PARTY_ACTION_CHOOSE_AND_CLOSE, FALSE, PARTY_MSG_CHOOSE_MON, Task_HandleChooseMonInput, CB2_ReturnToField);
+}
+
+void ItemUseCB_PromptStone(u8 taskId, TaskFunc func)
+{
+    (void)func;
+    // Must match the medicine "success" path: close party then run CB2_DoUseItemAnim (Prompt Stone branch).
+    PlaySE(SE_SELECT);
+    Task_DoUseItemAnim(taskId);
 }
 
 static bool8 CB2_FadeFromPartyMenu(void)

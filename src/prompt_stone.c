@@ -99,7 +99,12 @@ static void PromptStone_OnRequestFinished(u8 waitTaskId, bool8 failed)
     }
 
     UnlockPlayerFieldControls();
-    PromptStone_ShowFieldMessageThenUnlock(gText_PromptStoneProcessed);
+    if (targetSpecies != SPECIES_NONE
+        && targetSpecies != SPECIES_EGG
+        && targetSpecies == curSpecies)
+        PromptStone_ShowFieldMessageThenUnlock(gText_PromptStoneAlreadySpecies);
+    else
+        PromptStone_ShowFieldMessageThenUnlock(gText_PromptStoneProcessed);
 }
 
 void CB2_PromptStoneAfterPartyClose(void)

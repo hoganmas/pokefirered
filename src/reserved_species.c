@@ -43,6 +43,8 @@ u8 ReservedSpecies_AllocPendingNewPokemonRequest(void)
         {
             gNewPokemonPending[i].requestId = sNextNewPokemonRequestId++;
             gNewPokemonPending[i].status = NEW_POKEMON_REQ_PENDING;
+            // Shared payload; clear so host/Lua cannot leave a stale result from a prior completion.
+            gNewPokemonInfo.resultSpecies = SPECIES_NONE;
             return (u8)i;
         }
     }

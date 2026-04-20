@@ -186,6 +186,7 @@ extern const u8 gText_PromptStoneQueueFull[];
 extern const u8 gText_PromptStoneProcessed[];
 extern const u8 gText_PromptStoneFailed[];
 extern const u8 gText_PromptStonePartyChanged[];
+extern const u8 gText_PromptStoneAlreadySpecies[];
 extern const u8 gText_YesNo[];
 extern const u8 gText_Berry[];
 extern const u8 gText_Ghost[];

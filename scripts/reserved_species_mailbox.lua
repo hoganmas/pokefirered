@@ -82,6 +82,11 @@ M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES = true
 M.PROMPT_STONE_RS_SPRITE_DEX_MIN = 1
 M.PROMPT_STONE_RS_SPRITE_DEX_MAX = 386
 M.PROMPT_STONE_RS_SPRITE_PICK_TRIES = 48
+-- Pokegen HTTP: mGBA Lua POSTs to pokegen-server via host `curl` (blocking; requires curl + io.popen or os.execute).
+-- If result_species equals the party mon's species, Lua bumps to the next id in the reserved species window so evolution + ROM patches use a new row (repeat Prompt Stone on same mon).
+M.POKEGEN_BRIDGE_ENABLED = true
+M.POKEGEN_HTTP_URL = "http://127.0.0.1:8765/v1/generate"
+M.POKEGEN_HTTP_MAX_TIME_SEC = 30
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -91,6 +96,13 @@ M.PALETTE_ENTRY_SIZE = 8
 local _attachState = { cbid = nil, base = nil, promptStoneSlotCursor = 0 }
 local _promptStonePollId = nil
 local _promptStoneLoggedReq = {}
+local _bridgeReqSent = {}
+--- Last seen status per pending slot (0..NEW_POKEMON_PENDING_MAX-1); used to reset Lua caches when a new PENDING is allocated.
+local _prevNppStatus = {}
+--- Per pending request key ("slot:reqId") -> reserved species id assigned for this request.
+local _promptStoneAssignedSpecies = {}
+--- Session set of reserved species ids already assigned (avoid reusing rows while window has free ids).
+local _reservedSpeciesAllocated = {}
 
 -- EWRAM bus range; memory.wram uses offsets from 0x02000000 (mGBA scripting docs).
 local GBA_EWRAM_BASE = 0x02000000
@@ -396,6 +408,15 @@ function M.getRuntimeLzScratchLayout(mb)
     if not (a < b and b < c and c < d and d < e) then
         return nil, "runtime LZ addresses must be strictly ascending (front < back < pal < shiny < end)"
     end
+    local perSpeciesStride = (b - a) + (c - b) + (d - c) + (d - c)
+    local total = e - a
+    local speciesSlots = 1
+    if perSpeciesStride > 0 and total >= perSpeciesStride then
+        speciesSlots = math.floor(total / perSpeciesStride)
+        if speciesSlots < 1 then
+            speciesSlots = 1
+        end
+    end
     return {
         scratchBase = a,
         scratchEndExclusive = e,
@@ -407,7 +428,38 @@ function M.getRuntimeLzScratchLayout(mb)
         maxBackLz = c - b,
         maxPalLz = d - c,
         maxShinyPalLz = e - d,
+        perSpeciesStride = perSpeciesStride,
+        speciesSlots = speciesSlots,
     }
+end
+
+local function runtimeLzAddressesForSpecies(mb, speciesId)
+    local layout, err = M.getRuntimeLzScratchLayout(mb)
+    if not layout then
+        return nil, err
+    end
+    local slot = speciesId - mb.targetSpecies
+    if slot < 0 or slot >= mb.count then
+        return nil, string.format("speciesId %u not in reserved window [%u..%u]", speciesId, mb.targetSpecies, mb.targetSpecies + mb.count - 1)
+    end
+    if slot >= layout.speciesSlots then
+        return nil, string.format("runtime scratch has %u per-species slots, but species slot=%u requested", layout.speciesSlots, slot)
+    end
+    local base = mb.runtimeFrontLzAddr + slot * layout.perSpeciesStride
+    local front = base
+    local back = base + layout.maxFrontLz
+    local pal = back + layout.maxBackLz
+    local shiny = pal + layout.maxPalLz
+    return {
+        front = front,
+        back = back,
+        pal = pal,
+        shiny = shiny,
+        maxFrontLz = layout.maxFrontLz,
+        maxBackLz = layout.maxBackLz,
+        maxPalLz = layout.maxPalLz,
+        maxShinyPalLz = layout.maxPalLz,
+    }, nil
 end
 
 local function encodeGen3TextByte(ch)
@@ -437,12 +489,6 @@ local function encodeGen3Text(name, maxChars)
         out[#out + 1] = encodeGen3TextByte(name:sub(i, i))
     end
     return out
-end
-
-function M.getFirstReservedSpeciesId(emu, base)
-    -- targetSpecies is currently initialized to SPECIES_CHIMECHO + 1.
-    _dbg(string.format("getFirstReservedSpeciesId(base=0x%08X)", base))
-    return M.readMailbox(emu, base).targetSpecies
 end
 
 function M.getReservedSpeciesIdForSlot(emu, base, slot)
@@ -619,6 +665,171 @@ local function nextPromptStoneReservedSlotIndex(count)
     return skip + idx
 end
 
+--- Reserve a target reserved species id for this request.
+--- Prefer rows not yet assigned this session, and avoid selecting prevSpecies when possible.
+local function reserveNextPromptStoneSpeciesId(mb, prevSpecies)
+    local count = mb and mb.count or 0
+    if count <= 0 or not mb.targetSpecies then
+        return nil, nil
+    end
+    local skip = M.PROMPT_STONE_SKIP_INITIAL_RESERVED_SLOTS or 0
+    if skip >= count then
+        skip = 0
+    end
+    local usable = count - skip
+    if usable <= 0 then
+        return nil, nil
+    end
+    local start = _attachState.promptStoneSlotCursor % usable
+    local chosenIdx = nil
+    local chosenSlot = nil
+    local chosenSpecies = nil
+
+    local function tryPick(requireFresh, avoidPrev)
+        for off = 0, usable - 1 do
+            local idx = (start + off) % usable
+            local slot = skip + idx
+            local species = mb.targetSpecies + slot
+            if (not avoidPrev or species ~= prevSpecies) and (not requireFresh or not _reservedSpeciesAllocated[species]) then
+                chosenIdx = idx
+                chosenSlot = slot
+                chosenSpecies = species
+                return true
+            end
+        end
+        return false
+    end
+
+    if not tryPick(true, true) then
+        if not tryPick(false, true) then
+            tryPick(false, false)
+        end
+    end
+    if not chosenSpecies then
+        return nil, nil
+    end
+    local delta = (chosenIdx - start + usable) % usable
+    _attachState.promptStoneSlotCursor = _attachState.promptStoneSlotCursor + delta + 1
+    _reservedSpeciesAllocated[chosenSpecies] = true
+    return chosenSpecies, chosenSlot
+end
+
+--- When pokegen returns result_species == party species, the evolution scene will not run and ROM patches
+--- would stomp the same `gSpeciesInfo` row. Return the next species id inside the reserved mailbox window
+--- [targetSpecies, targetSpecies+count-1], wrapping to targetSpecies+skip when at the end (matches stub chaining).
+local function nextReservedSpeciesIdAfter(mb, prev)
+    local first = mb.targetSpecies
+    local n = mb.count
+    if not first or not n or n <= 0 then
+        return nil
+    end
+    local last = first + n - 1
+    local skip = M.PROMPT_STONE_SKIP_INITIAL_RESERVED_SLOTS or 0
+    local floorId = first + math.min(skip, math.max(0, n - 1))
+    if prev < first or prev > last then
+        return nil
+    end
+    if prev < last then
+        return prev + 1
+    end
+    return floorId
+end
+
+local function jsonEscapeForBridge(s)
+    s = tostring(s or "")
+    s = s:gsub("\\", "\\\\")
+    s = s:gsub('"', '\\"')
+    s = s:gsub("\n", "\\n")
+    s = s:gsub("\r", "\\r")
+    return s
+end
+
+local function parsePokegenJsonResponse(s)
+    if not s or s == "" then
+        return nil, 0
+    end
+    local st = s:match('"status"%s*:%s*"(%a+)"')
+    local rs = s:match('"result_species"%s*:%s*(%d+)')
+    return st, tonumber(rs or 0)
+end
+
+local function shellSingleQuote(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+--- POST JSON to pokegen-server via host `curl` (blocking). Requires curl on PATH.
+--- mGBA may define io.popen but throw "'popen' not supported" — use pcall and fall back to os.execute.
+local function pokegenHttpPostCurl(url, jsonBody)
+    local maxSec = M.POKEGEN_HTTP_MAX_TIME_SEC or 30
+    local tmp = os.tmpname()
+    if not tmp then
+        tmp = "build/pokegen_http_body.json"
+    end
+    local wf = io.open(tmp, "w")
+    if not wf then
+        return false, nil, nil, "cannot write temp JSON body"
+    end
+    wf:write(jsonBody)
+    wf:close()
+    -- -d @file avoids shell-escaping the JSON body; quote URL and path for sh.
+    local qtmp = shellSingleQuote(tmp)
+    local qurl = shellSingleQuote(url)
+    local cmd = string.format(
+        "curl -sS --max-time %d -X POST -H %s -d @%s %s",
+        maxSec,
+        shellSingleQuote("Content-Type: application/json"),
+        qtmp,
+        qurl
+    )
+    local resp = nil
+    local err = nil
+    local gotViaPopen = false
+    if io and io.popen then
+        local okPopen, hOrErr = pcall(io.popen, cmd)
+        if okPopen and hOrErr then
+            gotViaPopen = true
+            local okRead, dataOrErr = pcall(function()
+                local s = hOrErr:read("*a")
+                hOrErr:close()
+                return s
+            end)
+            if okRead then
+                resp = dataOrErr
+            else
+                err = tostring(dataOrErr)
+                gotViaPopen = false
+            end
+        elseif not okPopen then
+            err = tostring(hOrErr)
+        end
+    end
+    if not gotViaPopen and os and os.execute then
+        local outPath = tmp .. ".out"
+        local redir = cmd .. " > " .. shellSingleQuote(outPath) .. " 2>&1"
+        local okEx, codeOrErr = pcall(os.execute, redir)
+        if not okEx then
+            err = err or tostring(codeOrErr)
+        end
+        local rf = io.open(outPath, "r")
+        if rf then
+            resp = rf:read("*a")
+            rf:close()
+        end
+        pcall(os.remove, outPath)
+    end
+    pcall(os.remove, tmp)
+    if not resp or resp == "" then
+        return false,
+            nil,
+            nil,
+            err
+                or "empty response (install curl; check POKEGEN_HTTP_URL). If mGBA blocks subprocesses, use a build that allows os.execute."
+    end
+    local st, rs = parsePokegenJsonResponse(resp)
+    return true, st, rs, nil
+end
+
+--- Must be declared before promptStoneApplySuccess (Lua local scoping).
 local function promptStoneDisplayNameFromPrompt(promptAscii)
     if not promptAscii then
         return nil
@@ -628,6 +839,66 @@ local function promptStoneDisplayNameFromPrompt(promptAscii)
         return nil
     end
     return s:sub(1, M.POKEMON_NAME_LENGTH)
+end
+
+--- Clone/sprites/name/resultSpecies/DONE + logs (shared by auto-stub and pokegen HTTP).
+local function promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlotLog)
+    if prev ~= 0 then
+        M.copyPokemonSpeciesTablesFromSource(emu, base, targetSpecies, prev)
+    end
+    local rndDex, rndFront, rndBack = nil, nil, nil
+    if M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES == true then
+        local repoRoot = trimPath(M._REPO_ROOT or ".")
+        rndDex, rndFront, rndBack = pickRandomRsDexWithSprites(repoRoot)
+        if rndFront and rndBack then
+            local ok, err = pcall(function()
+                M.applyRuntimePngPair(emu, base, targetSpecies, rndFront, rndBack, repoRoot)
+            end)
+            if not ok then
+                if console and console.log then
+                    console:log(
+                        "[ReservedSpeciesMailbox] Prompt Stone: random RS sprites failed (using cloned tables only): "
+                            .. tostring(err)
+                    )
+                end
+            end
+        elseif console and console.log then
+            console:log(
+                "[ReservedSpeciesMailbox] Prompt Stone: no RS sprite PNG pair under ../sprites/... (stats clone only). tries="
+                    .. tostring(M.PROMPT_STONE_RS_SPRITE_PICK_TRIES)
+            )
+        end
+    end
+    local disp = promptStoneDisplayNameFromPrompt(promptText)
+    local pk = rsSlotLog
+    if pk == nil then
+        pk = targetSpecies % 1000
+    end
+    M.writeSpeciesNameById(emu, base, targetSpecies, disp or string.format("PKMN%d", pk))
+    w16(emu, infoAddr + M.OFFSET_NPI_RESULT_SPECIES, targetSpecies)
+    w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_DONE)
+    if console and console.log then
+        if rndDex then
+            console:log(
+                string.format(
+                    "[ReservedSpeciesMailbox] Prompt Stone: reservedSlot=%s resultSpecies=%u prevSpecies=%u RS_dex=%u -> DONE",
+                    tostring(rsSlotLog),
+                    targetSpecies,
+                    prev,
+                    rndDex
+                )
+            )
+        else
+            console:log(
+                string.format(
+                    "[ReservedSpeciesMailbox] Prompt Stone: reservedSlot=%s resultSpecies=%u (cloned from species %u) -> DONE",
+                    tostring(rsSlotLog),
+                    targetSpecies,
+                    prev
+                )
+            )
+        end
+    end
 end
 
 local function writeAsciiEosStringToRom(emu, addr, text, maxChars)
@@ -936,8 +1207,8 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
     if mb.version ~= M.VERSION then
         error(string.format("mailbox version mismatch: got %d need %d", mb.version, M.VERSION))
     end
-    local layout, lerr = M.getRuntimeLzScratchLayout(mb)
-    if not layout then
+    local addrs, lerr = runtimeLzAddressesForSpecies(mb, speciesId)
+    if not addrs then
         error(lerr or "bad runtime LZ layout")
     end
     repoRoot = trimPath(repoRoot or M._REPO_ROOT)
@@ -987,27 +1258,27 @@ function M.applyRuntimePngPair(emu, base, speciesId, frontPng, backPng, repoRoot
     if not flz or not blz or not plz or not slz then
         error("bad manifest.txt after host PNG conversion")
     end
-    if flz > layout.maxFrontLz or blz > layout.maxBackLz or plz > layout.maxPalLz or slz > layout.maxShinyPalLz then
+    if flz > addrs.maxFrontLz or blz > addrs.maxBackLz or plz > addrs.maxPalLz or slz > addrs.maxShinyPalLz then
         error(
             string.format(
                 "converted LZ larger than ROM scratch (max front=%u back=%u pal=%u shiny=%u); raise RESERVED_RUNTIME_*_CAP in reserved_species.h and rebuild",
-                layout.maxFrontLz,
-                layout.maxBackLz,
-                layout.maxPalLz,
-                layout.maxShinyPalLz
+                addrs.maxFrontLz,
+                addrs.maxBackLz,
+                addrs.maxPalLz,
+                addrs.maxShinyPalLz
             )
         )
     end
-    assert(writeFileBytesToEmu(emu, mb.runtimeFrontLzAddr, workdir .. "/front.4bpp.lz") == flz)
-    assert(writeFileBytesToEmu(emu, mb.runtimeBackLzAddr, workdir .. "/back.4bpp.lz") == blz)
-    assert(writeFileBytesToEmu(emu, mb.runtimePalLzAddr, workdir .. "/normal.gbapal.lz") == plz)
-    assert(writeFileBytesToEmu(emu, mb.runtimeShinyPalLzAddr, workdir .. "/shiny.gbapal.lz") == slz)
+    assert(writeFileBytesToEmu(emu, addrs.front, workdir .. "/front.4bpp.lz") == flz)
+    assert(writeFileBytesToEmu(emu, addrs.back, workdir .. "/back.4bpp.lz") == blz)
+    assert(writeFileBytesToEmu(emu, addrs.pal, workdir .. "/normal.gbapal.lz") == plz)
+    assert(writeFileBytesToEmu(emu, addrs.shiny, workdir .. "/shiny.gbapal.lz") == slz)
 
-    M.patchFrontPicEntry(emu, base, speciesId, mb.runtimeFrontLzAddr, man.FRONT_UNCOMP, speciesId)
-    M.patchBackPicEntry(emu, base, speciesId, mb.runtimeBackLzAddr, man.BACK_UNCOMP, speciesId)
-    M.patchPaletteEntry(emu, base, speciesId, mb.runtimePalLzAddr, speciesId)
-    M.patchShinyPaletteEntry(emu, base, speciesId, mb.runtimeShinyPalLzAddr, speciesId + M.SPECIES_SHINY_TAG)
-    _dbg(string.format("applyRuntimePngPair done species=%u front@0x%08X back@0x%08X", speciesId, mb.runtimeFrontLzAddr, mb.runtimeBackLzAddr))
+    M.patchFrontPicEntry(emu, base, speciesId, addrs.front, man.FRONT_UNCOMP, speciesId)
+    M.patchBackPicEntry(emu, base, speciesId, addrs.back, man.BACK_UNCOMP, speciesId)
+    M.patchPaletteEntry(emu, base, speciesId, addrs.pal, speciesId)
+    M.patchShinyPaletteEntry(emu, base, speciesId, addrs.shiny, speciesId + M.SPECIES_SHINY_TAG)
+    _dbg(string.format("applyRuntimePngPair done species=%u front@0x%08X back@0x%08X", speciesId, addrs.front, addrs.back))
 end
 
 function M.validateMailbox(emu, base)
@@ -1075,6 +1346,25 @@ function M.startPromptStonePendingPoll()
             local row = pendAddr + slot * M.NEW_POKEMON_PENDING_SLOT_SIZE
             local st = r8(emu, row + M.OFFSET_NPP_STATUS)
             if st == M.NEW_POKEMON_REQ_PENDING then
+                local prevSt = _prevNppStatus[slot]
+                if prevSt ~= M.NEW_POKEMON_REQ_PENDING then
+                    local prefix = tostring(slot) .. ":"
+                    for k in pairs(_bridgeReqSent) do
+                        if type(k) == "string" and k:sub(1, #prefix) == prefix then
+                            _bridgeReqSent[k] = nil
+                        end
+                    end
+                    for k in pairs(_promptStoneLoggedReq) do
+                        if type(k) == "string" and k:sub(1, #prefix) == prefix then
+                            _promptStoneLoggedReq[k] = nil
+                        end
+                    end
+                    for k in pairs(_promptStoneAssignedSpecies) do
+                        if type(k) == "string" and k:sub(1, #prefix) == prefix then
+                            _promptStoneAssignedSpecies[k] = nil
+                        end
+                    end
+                end
                 local prev = r16(emu, infoAddr + M.OFFSET_NPI_PREV_EVOLUTION_SPECIES)
                 local promptText = M.readGen3StringFromEmu(emu, infoAddr + M.OFFSET_NPI_PROMPT_TEXT, M.NEW_POKEMON_PROMPT_TEXT_LEN)
                 local reqId = r32(emu, row + M.OFFSET_NPP_REQUEST_ID)
@@ -1096,64 +1386,132 @@ function M.startPromptStonePendingPoll()
                         _dbg(line)
                     end
                 end
-                if M.PROMPT_STONE_AUTO_STUB == true then
+                if M.POKEGEN_BRIDGE_ENABLED == true then
+                    if not _bridgeReqSent[logKey] then
+                        local assignedSpecies = _promptStoneAssignedSpecies[logKey]
+                        local assignedSlot = nil
+                        if not assignedSpecies then
+                            assignedSpecies, assignedSlot = reserveNextPromptStoneSpeciesId(mb, prev)
+                            _promptStoneAssignedSpecies[logKey] = assignedSpecies
+                        end
+                        if not assignedSpecies or assignedSpecies == 0 then
+                            w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                            if console and console.log then
+                                console:log(
+                                    "[ReservedSpeciesMailbox] pokegen: no reserved species id available for this request (window exhausted?)"
+                                )
+                            end
+                        end
+                        if console and console.log and assignedSlot ~= nil then
+                            console:log(
+                                string.format(
+                                    "[ReservedSpeciesMailbox] pokegen: reserved slot=%u speciesId=%u for requestId=%u",
+                                    assignedSlot,
+                                    assignedSpecies,
+                                    reqId
+                                )
+                            )
+                        end
+                        _bridgeReqSent[logKey] = true
+                        local rid = tostring(slot) .. "-" .. tostring(reqId)
+                        local body = string.format(
+                            '{"request_id":"%s","prev_evolution_species":%d,"prompt_text":"%s"}',
+                            rid,
+                            prev,
+                            jsonEscapeForBridge(promptText)
+                        )
+                        local url = M.POKEGEN_HTTP_URL or "http://127.0.0.1:8765/v1/generate"
+                        local pc, okHttp, st, species, httpErr = pcall(pokegenHttpPostCurl, url, body)
+                        if not pc then
+                            w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                            if console and console.log then
+                                console:log(
+                                    "[ReservedSpeciesMailbox] pokegen: Lua error: " .. tostring(okHttp)
+                                )
+                            end
+                        elseif not okHttp then
+                            w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                            if console and console.log then
+                                console:log("[ReservedSpeciesMailbox] pokegen: " .. tostring(httpErr))
+                            end
+                        else
+                            if console and console.log then
+                                console:log(
+                                    "[ReservedSpeciesMailbox] pokegen: status="
+                                        .. tostring(st)
+                                        .. " result_species="
+                                        .. tostring(species)
+                                )
+                            end
+                        end
+                        if pc and okHttp and st == "done" and species ~= nil and species ~= 0 then
+                            local targetSpecies = _promptStoneAssignedSpecies[logKey] or species
+                            if targetSpecies ~= species and console and console.log then
+                                console:log(
+                                    string.format(
+                                        "[ReservedSpeciesMailbox] pokegen: mapping server result_species=%u -> reserved targetSpecies=%u",
+                                        species,
+                                        targetSpecies
+                                    )
+                                )
+                            end
+                            if targetSpecies == prev then
+                                local bumped = nextReservedSpeciesIdAfter(mb, prev)
+                                if bumped and bumped ~= prev then
+                                    targetSpecies = bumped
+                                    if console and console.log then
+                                        console:log(
+                                            string.format(
+                                                "[ReservedSpeciesMailbox] pokegen: result_species equals party species (%u); using next reserved species id %u",
+                                                prev,
+                                                targetSpecies
+                                            )
+                                        )
+                                    end
+                                else
+                                    w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                                    if console and console.log then
+                                        console:log(
+                                            "[ReservedSpeciesMailbox] pokegen: targetSpecies equals party species and no next id in reserved window"
+                                        )
+                                    end
+                                end
+                            end
+                            if r8(emu, row + M.OFFSET_NPP_STATUS) == M.NEW_POKEMON_REQ_PENDING then
+                                local rsLog = nil
+                                if mb.targetSpecies and targetSpecies >= mb.targetSpecies then
+                                    rsLog = targetSpecies - mb.targetSpecies
+                                end
+                                promptStoneApplySuccess(
+                                    emu,
+                                    base,
+                                    mb,
+                                    infoAddr,
+                                    row,
+                                    targetSpecies,
+                                    prev,
+                                    promptText,
+                                    rsLog
+                                )
+                            end
+                        elseif pc and okHttp then
+                            w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
+                            if console and console.log then
+                                console:log(
+                                    "[ReservedSpeciesMailbox] pokegen: FAILED status="
+                                        .. tostring(st)
+                                        .. " result_species="
+                                        .. tostring(species)
+                                )
+                            end
+                        end
+                    end
+                elseif M.PROMPT_STONE_AUTO_STUB == true then
                     local count = mb.count
                     if count and count > 0 then
                         local rsSlot = nextPromptStoneReservedSlotIndex(count)
                         local targetSpecies = M.getReservedSpeciesIdForSlot(emu, base, rsSlot)
-                        if prev ~= 0 then
-                            M.copyPokemonSpeciesTablesFromSource(emu, base, targetSpecies, prev)
-                        end
-                        local rndDex, rndFront, rndBack = nil, nil, nil
-                        if M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES == true then
-                            local repoRoot = trimPath(M._REPO_ROOT or ".")
-                            rndDex, rndFront, rndBack = pickRandomRsDexWithSprites(repoRoot)
-                            if rndFront and rndBack then
-                                local ok, err = pcall(function()
-                                    M.applyRuntimePngPair(emu, base, targetSpecies, rndFront, rndBack, repoRoot)
-                                end)
-                                if not ok then
-                                    if console and console.log then
-                                        console:log(
-                                            "[ReservedSpeciesMailbox] Prompt Stone: random RS sprites failed (using cloned tables only): "
-                                                .. tostring(err)
-                                        )
-                                    end
-                                end
-                            elseif console and console.log then
-                                console:log(
-                                    "[ReservedSpeciesMailbox] Prompt Stone: no RS sprite PNG pair found under ../sprites/... (stats clone only). dex search "
-                                        .. tostring(M.PROMPT_STONE_RS_SPRITE_PICK_TRIES)
-                                        .. " tries."
-                                )
-                            end
-                        end
-                        local disp = promptStoneDisplayNameFromPrompt(promptText)
-                        M.writeSpeciesNameById(emu, base, targetSpecies, disp or string.format("PKMN%d", rsSlot))
-                        w16(emu, infoAddr + M.OFFSET_NPI_RESULT_SPECIES, targetSpecies)
-                        w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_DONE)
-                        if console and console.log then
-                            if rndDex then
-                                console:log(
-                                    string.format(
-                                        "[ReservedSpeciesMailbox] Prompt Stone auto: reservedSlot=%d resultSpecies=%u prevSpecies=%u RS_dex=%u -> DONE",
-                                        rsSlot,
-                                        targetSpecies,
-                                        prev,
-                                        rndDex
-                                    )
-                                )
-                            else
-                                console:log(
-                                    string.format(
-                                        "[ReservedSpeciesMailbox] Prompt Stone auto: reservedSlot=%d resultSpecies=%u (cloned from species %u) -> DONE",
-                                        rsSlot,
-                                        targetSpecies,
-                                        prev
-                                    )
-                                )
-                            end
-                        end
+                        promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlot)
                     else
                         w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
                         if console and console.log then
@@ -1162,6 +1520,7 @@ function M.startPromptStonePendingPoll()
                     end
                 end
             end
+            _prevNppStatus[slot] = st
         end
     end)
 end

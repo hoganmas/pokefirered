@@ -259,6 +259,7 @@ const u8 gText_PromptStoneQueueFull[] = _("Too many requests are pending.\nPleas
 const u8 gText_PromptStoneProcessed[] = _("The request finished processing.{PAUSE_UNTIL_PRESS}");
 const u8 gText_PromptStoneFailed[] = _("The request could not be completed.{PAUSE_UNTIL_PRESS}");
 const u8 gText_PromptStonePartyChanged[] = _("That POKéMON changed before the\nresult came back.{PAUSE_UNTIL_PRESS}");
+const u8 gText_PromptStoneAlreadySpecies[] = _("Your POKéMON is already this species.\nTry another POKéMON or a result that\nevolve into something different.{PAUSE_UNTIL_PRESS}");
 const u8 gText_CantBeUsedOnPkmn[] = _("This can't be used on\nthat POKéMON.{PAUSE_UNTIL_PRESS}");
 const u8 gText_PkmnCantSwitchOut[] = _("{STR_VAR_1} can't be switched\nout!{PAUSE_UNTIL_PRESS}");
 const u8 gText_PkmnAlreadyInBattle[] = _("{STR_VAR_1} is already\nin battle!{PAUSE_UNTIL_PRESS}");

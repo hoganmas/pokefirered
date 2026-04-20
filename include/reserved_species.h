@@ -2,14 +2,17 @@
 #define GUARD_RESERVED_SPECIES_H
 
 #include "global.h"
+#include "constants/reserved_species_config.h"
 
 // LZ staging caps for mGBA runtime uploads (see scripts/reserved_species_mailbox.lua; PNG→LZ via tools/gbagfx/gbagfx).
 // Payloads live in a dedicated ROM scratch region (not EWRAM); the emulator patches those bytes when applying PNGs.
 #define RESERVED_RUNTIME_FRONT_LZ_CAP 0x3000u
 #define RESERVED_RUNTIME_BACK_LZ_CAP 0x3000u
 #define RESERVED_RUNTIME_PAL_LZ_CAP 0x200u
-#define RESERVED_RUNTIME_ROM_SCRATCH_SIZE \
+#define RESERVED_RUNTIME_ROM_SCRATCH_PER_SPECIES \
     (RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP)
+#define RESERVED_RUNTIME_ROM_SCRATCH_SIZE \
+    (RESERVED_RUNTIME_ROM_SCRATCH_PER_SPECIES * NUM_RESERVED_CUSTOM_SPECIES)
 
 #define RESERVED_POKEDEX_CATEGORY_TEXT_LEN 11u
 #define RESERVED_POKEDEX_DESCRIPTION_TEXT_LEN 255u

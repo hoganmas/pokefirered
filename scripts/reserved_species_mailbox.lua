@@ -19,7 +19,7 @@ _dbg("loaded")
 
 M.MAGIC = 0x31505352
 M.TRAIL = 0x544C4252
-M.VERSION = 6
+M.VERSION = 7
 M.SPECIES_SHINY_TAG = 500
 M.LEVEL_UP_MOVE_ID = 0x01FF
 M.LEVEL_UP_MOVE_LV = 0xFE00
@@ -51,12 +51,16 @@ M.OFFSET_POKEDEX_DESCRIPTION_STRIDE = 78
 M.OFFSET_RESERVED_LEARNSET_DATA = 80
 M.OFFSET_RESERVED_LEARNSET_STRIDE = 84
 M.OFFSET_RESERVED_LEARNSET_MAX_ENTRIES = 86
-M.OFFSET_RUNTIME_SCRATCH_END = 88
-M.OFFSET_NEW_POKEMON_INFO = 92
-M.OFFSET_NEW_POKEMON_PENDING = 96
-M.OFFSET_TRAIL_MAGIC = 100
+M.OFFSET_MON_ICON_TABLE = 88
+M.OFFSET_MON_FOOTPRINT_TABLE = 92
+M.OFFSET_RUNTIME_ICON_DATA = 96
+M.OFFSET_RUNTIME_FOOTPRINT_DATA = 100
+M.OFFSET_RUNTIME_SCRATCH_END = 104
+M.OFFSET_NEW_POKEMON_INFO = 108
+M.OFFSET_NEW_POKEMON_PENDING = 112
+M.OFFSET_TRAIL_MAGIC = 116
 
-M.MAILBOX_SIZE = 104
+M.MAILBOX_SIZE = 120
 
 -- struct NewPokemonInfo (include/reserved_species.h), minimal payload.
 M.NEW_POKEMON_INFO_SIZE = 132
@@ -74,7 +78,7 @@ M.NEW_POKEMON_REQ_FAILED = 4
 -- When true, mGBA Lua picks the next reserved species slot, clones ROM tables from the party mon's species
 -- into that slot (stats, learnset pointer, front/back palettes), sets the species name from the prompt text,
 -- writes resultSpecies, and marks DONE so the evolution scene can run without external tooling.
-M.PROMPT_STONE_AUTO_STUB = true
+M.PROMPT_STONE_AUTO_STUB = false
 -- Skip this many low reserved slots for Prompt Stone (slot 0 is often the build fixture, e.g. NEXOMON).
 M.PROMPT_STONE_SKIP_INITIAL_RESERVED_SLOTS = 1
 -- After cloning stats from the party mon, replace battle sprites with a random RS Gen III PNG pair (dex 1..386).
@@ -85,8 +89,11 @@ M.PROMPT_STONE_RS_SPRITE_PICK_TRIES = 48
 -- Pokegen HTTP: mGBA Lua POSTs to pokegen-server via host `curl` (blocking; requires curl + io.popen or os.execute).
 -- If result_species equals the party mon's species, Lua bumps to the next id in the reserved species window so evolution + ROM patches use a new row (repeat Prompt Stone on same mon).
 M.POKEGEN_BRIDGE_ENABLED = true
-M.POKEGEN_HTTP_URL = "http://127.0.0.1:8765/v1/generate"
+M.POKEGEN_HTTP_URL = "http://127.0.0.1:8766/v1/generate"
 M.POKEGEN_HTTP_MAX_TIME_SEC = 30
+M.POKEGEN_PAYLOAD_FETCH_ENABLED = true
+M.POKEGEN_PAYLOAD_URL_TEMPLATE = "" -- Optional; include {request_id}. Default derives from POKEGEN_HTTP_URL.
+M.POKEGEN_HTTP_ASSET_MAX_TIME_SEC = 30
 M.POKEMON_NAME_LENGTH = 10
 M.SPECIES_NAME_STRIDE = M.POKEMON_NAME_LENGTH + 1
 M.SPRITE_SHEET_ENTRY_SIZE = 8 -- sizeof(struct CompressedSpriteSheet)
@@ -142,6 +149,8 @@ local reserveNextPromptStoneSpeciesId = _init.reserveNextPromptStoneSpeciesId
 local nextReservedSpeciesIdAfter = _init.nextReservedSpeciesIdAfter
 local jsonEscapeForBridge = _init.jsonEscapeForBridge
 local pokegenHttpPostCurl = _init.pokegenHttpPostCurl
+local pokegenHttpGetCurl = _init.pokegenHttpGetCurl
+local parsePokegenPayloadResponse = _init.parsePokegenPayloadResponse
 
 --- Must be declared before promptStoneApplySuccess (Lua local scoping).
 local function promptStoneDisplayNameFromPrompt(promptAscii)
@@ -155,13 +164,138 @@ local function promptStoneDisplayNameFromPrompt(promptAscii)
     return s:sub(1, M.POKEMON_NAME_LENGTH)
 end
 
+local function derivePokegenPayloadUrl(generateUrl, requestId)
+    local rid = tostring(requestId or "")
+    if rid == "" then
+        return nil
+    end
+    local tpl = tostring(M.POKEGEN_PAYLOAD_URL_TEMPLATE or "")
+    if tpl ~= "" then
+        if tpl:find("{request_id}", 1, true) then
+            return tpl:gsub("{request_id}", rid)
+        end
+        if tpl:sub(-1) == "/" then
+            return tpl .. rid
+        end
+        return tpl .. "/" .. rid
+    end
+    local url = tostring(generateUrl or "")
+    if url == "" then
+        return nil
+    end
+    if url:match("/v1/generate/?$") then
+        return (url:gsub("/v1/generate/?$", "")) .. "/payloads/" .. rid
+    end
+    if url:sub(-1) == "/" then
+        return url .. "payloads/" .. rid
+    end
+    return url .. "/payloads/" .. rid
+end
+
+local function hostDownloadUrlToFile(url, outPath, maxSec)
+    maxSec = tonumber(maxSec) or (M.POKEGEN_HTTP_ASSET_MAX_TIME_SEC or M.POKEGEN_HTTP_MAX_TIME_SEC or 30)
+    local cmd = string.format("curl -fsSL --max-time %d %q -o %q", maxSec, tostring(url), tostring(outPath))
+    local a, b, c = os.execute(cmd)
+    return shellSucceeded(a, b, c)
+end
+
+local function hostFileSize(path)
+    local f = io.open(path, "rb")
+    if not f then
+        return nil
+    end
+    local n = #(f:read("*a") or "")
+    f:close()
+    return n
+end
+
+local function writeHostFileToEmu(emu, dstAddr, path)
+    local f = assert(io.open(path, "rb"))
+    local data = f:read("*a") or ""
+    f:close()
+    for i = 1, #data do
+        w8(emu, dstAddr + i - 1, string.byte(data, i))
+    end
+    return #data
+end
+
+local function hostConvertIconFootprintToRaw(repoRoot, iconPng, footprintPng, outDir)
+    local gfx = repoRoot .. "/tools/gbagfx/gbagfx"
+    if package.config:sub(1, 1) == "\\" then
+        gfx = gfx .. ".exe"
+    end
+    local gf = io.open(gfx, "r")
+    if not gf then
+        return nil, "missing gbagfx: " .. gfx
+    end
+    gf:close()
+    local a0, b0, c0 = os.execute(string.format("mkdir -p %q", outDir))
+    if not shellSucceeded(a0, b0, c0) then
+        return nil, "mkdir failed: " .. outDir
+    end
+    local iconOut = outDir .. "/icon.4bpp"
+    local fpOut = outDir .. "/footprint.1bpp"
+    local cmd1 = string.format("%q %q %q %s", gfx, iconPng, iconOut, "-num_tiles 32")
+    local a1, b1, c1 = os.execute(cmd1)
+    if not shellSucceeded(a1, b1, c1) then
+        return nil, "icon convert failed: " .. cmd1
+    end
+    local cmd2 = string.format("%q %q %q %s", gfx, footprintPng, fpOut, "-num_tiles 4")
+    local a2, b2, c2 = os.execute(cmd2)
+    if not shellSucceeded(a2, b2, c2) then
+        return nil, "footprint convert failed: " .. cmd2
+    end
+    return { icon = iconOut, footprint = fpOut }, nil
+end
+
+local function fetchPokegenPayloadForRequest(generateUrl, requestId)
+    if M.POKEGEN_PAYLOAD_FETCH_ENABLED ~= true then
+        return nil, "payload fetch disabled"
+    end
+    local payloadUrl = derivePokegenPayloadUrl(generateUrl, requestId)
+    if not payloadUrl then
+        return nil, "payload URL missing"
+    end
+    local okHttp, body, err = pokegenHttpGetCurl(payloadUrl)
+    if not okHttp then
+        return nil, err or "payload GET failed"
+    end
+    local parsed = parsePokegenPayloadResponse(body)
+    if not parsed then
+        return nil, "payload parse failed"
+    end
+    return parsed, nil
+end
+
 --- Clone/sprites/name/resultSpecies/DONE + logs (shared by auto-stub and pokegen HTTP).
-local function promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlotLog)
+local function promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlotLog, enrich)
     if prev ~= 0 then
         M.copyPokemonSpeciesTablesFromSource(emu, base, targetSpecies, prev)
     end
     local rndDex, rndFront, rndBack = nil, nil, nil
-    if M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES == true then
+    local spriteAppliedFromPayload = false
+    if enrich and enrich.frontImageUrl and enrich.backImageUrl then
+        local tmpFront = (os.tmpname() or "build/pokegen_front") .. ".png"
+        local tmpBack = (os.tmpname() or "build/pokegen_back") .. ".png"
+        local okFront = hostDownloadUrlToFile(enrich.frontImageUrl, tmpFront)
+        local okBack = hostDownloadUrlToFile(enrich.backImageUrl, tmpBack)
+        if okFront and okBack then
+            local repoRoot = trimPath(M._REPO_ROOT or ".")
+            local ok, err = pcall(function()
+                M.applyRuntimePngPair(emu, base, targetSpecies, tmpFront, tmpBack, repoRoot)
+            end)
+            if ok then
+                spriteAppliedFromPayload = true
+            elseif console and console.log then
+                console:log("[ReservedSpeciesMailbox] Prompt Stone: payload sprite patch failed; falling back: " .. tostring(err))
+            end
+        elseif console and console.log then
+            console:log("[ReservedSpeciesMailbox] Prompt Stone: failed to download payload front/back sprite URL(s); falling back")
+        end
+        pcall(os.remove, tmpFront)
+        pcall(os.remove, tmpBack)
+    end
+    if not spriteAppliedFromPayload and M.PROMPT_STONE_AUTO_RANDOM_RS_SPRITES == true then
         local repoRoot = trimPath(M._REPO_ROOT or ".")
         rndDex, rndFront, rndBack = pickRandomRsDexWithSprites(repoRoot)
         if rndFront and rndBack then
@@ -183,16 +317,99 @@ local function promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpeci
             )
         end
     end
-    local disp = promptStoneDisplayNameFromPrompt(promptText)
+    local disp = nil
+    if enrich and enrich.speciesName then
+        disp = promptStoneDisplayNameFromPrompt(enrich.speciesName)
+    end
+    if not disp then
+        disp = promptStoneDisplayNameFromPrompt(promptText)
+    end
     local pk = rsSlotLog
     if pk == nil then
         pk = targetSpecies % 1000
     end
     M.writeSpeciesNameById(emu, base, targetSpecies, disp or string.format("PKMN%d", pk))
+    if rsSlotLog ~= nil and enrich then
+        if enrich.pokedexDescription and enrich.pokedexDescription ~= "" then
+            pcall(M.writeReservedPokedexDescription, emu, base, rsSlotLog, enrich.pokedexDescription)
+        end
+        if enrich.moveset and type(enrich.moveset) == "table" and #enrich.moveset > 0 then
+            local okMoves, errMoves = pcall(M.writeReservedLevelUpMoveset, emu, base, rsSlotLog, enrich.moveset)
+            if (not okMoves) and console and console.log then
+                console:log("[ReservedSpeciesMailbox] Prompt Stone: payload moveset patch failed: " .. tostring(errMoves))
+            end
+        end
+        if enrich.iconImageUrl and enrich.footprintImageUrl then
+            local tmpIcon = (os.tmpname() or "build/pokegen_icon") .. ".png"
+            local tmpFoot = (os.tmpname() or "build/pokegen_footprint") .. ".png"
+            local okIcon = hostDownloadUrlToFile(enrich.iconImageUrl, tmpIcon)
+            local okFoot = hostDownloadUrlToFile(enrich.footprintImageUrl, tmpFoot)
+            if okIcon and okFoot then
+                local repoRoot = trimPath(M._REPO_ROOT or ".")
+                local work = repoRoot .. "/build/mgba_runtime_iconfp_" .. tostring(os.time())
+                local conv, convErr = hostConvertIconFootprintToRaw(repoRoot, tmpIcon, tmpFoot, work)
+                if conv then
+                    local addrs, addrErr = M.getRuntimeScratchAddressesForSpecies(mb, targetSpecies)
+                    if addrs then
+                        local iconSize = hostFileSize(conv.icon) or 0
+                        local fpSize = hostFileSize(conv.footprint) or 0
+                        if iconSize > 0 and fpSize > 0 and iconSize <= addrs.maxIconData and fpSize <= addrs.maxFootprintData then
+                            writeHostFileToEmu(emu, addrs.icon, conv.icon)
+                            writeHostFileToEmu(emu, addrs.footprint, conv.footprint)
+                            M.patchIconEntry(emu, base, targetSpecies, addrs.icon)
+                            M.patchFootprintEntry(emu, base, targetSpecies, addrs.footprint)
+                            if console and console.log then
+                                console:log(
+                                    string.format(
+                                        "[ReservedSpeciesMailbox] Prompt Stone: payload icon/footprint patched species=%u icon@0x%08X footprint@0x%08X",
+                                        targetSpecies,
+                                        addrs.icon,
+                                        addrs.footprint
+                                    )
+                                )
+                            end
+                        elseif console and console.log then
+                            console:log(
+                                string.format(
+                                    "[ReservedSpeciesMailbox] Prompt Stone: icon/footprint too large (icon=%u/%u footprint=%u/%u)",
+                                    iconSize,
+                                    addrs.maxIconData or 0,
+                                    fpSize,
+                                    addrs.maxFootprintData or 0
+                                )
+                            )
+                        end
+                    elseif console and console.log then
+                        console:log("[ReservedSpeciesMailbox] Prompt Stone: icon/footprint address resolve failed: " .. tostring(addrErr))
+                    end
+                elseif console and console.log then
+                    console:log("[ReservedSpeciesMailbox] Prompt Stone: icon/footprint conversion failed: " .. tostring(convErr))
+                end
+            elseif console and console.log then
+                console:log("[ReservedSpeciesMailbox] Prompt Stone: failed to download payload icon/footprint URL(s)")
+            end
+            pcall(os.remove, tmpIcon)
+            pcall(os.remove, tmpFoot)
+        end
+        if console and console.log then
+            if enrich.cryAudioUrl then
+                console:log("[ReservedSpeciesMailbox] Prompt Stone: payload cry URL=" .. tostring(enrich.cryAudioUrl) .. " (cry patching pending)")
+            end
+        end
+    end
     w16(emu, infoAddr + M.OFFSET_NPI_RESULT_SPECIES, targetSpecies)
     w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_DONE)
     if console and console.log then
-        if rndDex then
+        if spriteAppliedFromPayload then
+            console:log(
+                string.format(
+                    "[ReservedSpeciesMailbox] Prompt Stone: reservedSlot=%s resultSpecies=%u prevSpecies=%u payload_sprites=1 -> DONE",
+                    tostring(rsSlotLog),
+                    targetSpecies,
+                    prev
+                )
+            )
+        elseif rndDex then
             console:log(
                 string.format(
                     "[ReservedSpeciesMailbox] Prompt Stone: reservedSlot=%s resultSpecies=%u prevSpecies=%u RS_dex=%u -> DONE",
@@ -390,6 +607,35 @@ function M.patchShinyPaletteEntry(emu, base, speciesId, palPtr, tag)
     local a = mb.monShinyPaletteTable + speciesId * M.PALETTE_ENTRY_SIZE
     w32(emu, a + 0, palPtr)
     w32(emu, a + 4, tag % 65536)
+    return a
+end
+
+function M.patchIconEntry(emu, base, speciesId, iconPtr)
+    _dbg(string.format("patchIconEntry(base=0x%08X, speciesId=%d, iconPtr=0x%08X)", base, speciesId, iconPtr))
+    local mb = M.readMailbox(emu, base)
+    if not mb.monIconTable or mb.monIconTable == 0 then
+        error("mailbox missing monIconTable pointer")
+    end
+    local a = mb.monIconTable + speciesId * 4
+    w32(emu, a, iconPtr)
+    return a
+end
+
+function M.patchFootprintEntry(emu, base, speciesId, footprintPtr)
+    _dbg(
+        string.format(
+            "patchFootprintEntry(base=0x%08X, speciesId=%d, footprintPtr=0x%08X)",
+            base,
+            speciesId,
+            footprintPtr
+        )
+    )
+    local mb = M.readMailbox(emu, base)
+    if not mb.monFootprintTable or mb.monFootprintTable == 0 then
+        error("mailbox missing monFootprintTable pointer")
+    end
+    local a = mb.monFootprintTable + speciesId * 4
+    w32(emu, a, footprintPtr)
     return a
 end
 
@@ -597,6 +843,27 @@ function M.startPromptStonePendingPoll()
                                 if mb.targetSpecies and targetSpecies >= mb.targetSpecies then
                                     rsLog = targetSpecies - mb.targetSpecies
                                 end
+                                local enrich = nil
+                                local payload, payloadErr = fetchPokegenPayloadForRequest(url, rid)
+                                if payload then
+                                    enrich = payload
+                                    if console and console.log then
+                                        console:log(
+                                            "[ReservedSpeciesMailbox] pokegen: payload fetched for request_id="
+                                                .. tostring(rid)
+                                                .. " species_name="
+                                                .. tostring(payload.speciesName)
+                                        )
+                                    end
+                                elseif payloadErr and console and console.log then
+                                    console:log(
+                                        "[ReservedSpeciesMailbox] pokegen: payload unavailable for request_id="
+                                            .. tostring(rid)
+                                            .. " ("
+                                            .. tostring(payloadErr)
+                                            .. "); using legacy flow"
+                                    )
+                                end
                                 promptStoneApplySuccess(
                                     emu,
                                     base,
@@ -606,7 +873,8 @@ function M.startPromptStonePendingPoll()
                                     targetSpecies,
                                     prev,
                                     promptText,
-                                    rsLog
+                                    rsLog,
+                                    enrich
                                 )
                             end
                         elseif pc and okHttp then
@@ -626,7 +894,7 @@ function M.startPromptStonePendingPoll()
                     if count and count > 0 then
                         local rsSlot = nextPromptStoneReservedSlotIndex(count)
                         local targetSpecies = M.getReservedSpeciesIdForSlot(emu, base, rsSlot)
-                        promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlot)
+                        promptStoneApplySuccess(emu, base, mb, infoAddr, row, targetSpecies, prev, promptText, rsSlot, nil)
                     else
                         w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
                         if console and console.log then

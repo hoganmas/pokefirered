@@ -78,18 +78,29 @@ return function(deps)
         local b = mb.runtimeBackLzAddr
         local c = mb.runtimePalLzAddr
         local d = mb.runtimeShinyPalLzAddr
-        local e = mb.runtimeRomScratchEndExclusive
-        if a == 0 or b == 0 or c == 0 or d == 0 then
+        local e = mb.runtimeIconDataAddr or 0
+        local f = mb.runtimeFootprintDataAddr or 0
+        local g = mb.runtimeRomScratchEndExclusive
+        if a == 0 or b == 0 or c == 0 or d == 0 or g == 0 then
             return nil, "mailbox missing runtime LZ slot addresses (rebuild ROM / ReservedSpecies_InitScriptMailbox)"
         end
-        if e == 0 then
-            return nil, "mailbox missing runtimeRomScratchEndExclusive (need mailbox version >= 3)"
+        local hasIconFootprint = (e > d) and (f > e) and (g > f)
+        if not hasIconFootprint then
+            -- Backward compatibility with mailbox v6 layout (no icon/footprint scratch pointers).
+            e = d + (d - c)
+            f = e
         end
-        if not (a < b and b < c and c < d and d < e) then
-            return nil, "runtime LZ addresses must be strictly ascending (front < back < pal < shiny < end)"
+        if hasIconFootprint and not (a < b and b < c and c < d and d < e and e < f and f < g) then
+            return nil, "runtime scratch addresses must be strictly ascending (front < back < pal < shiny < icon < footprint < end)"
         end
-        local perSpeciesStride = (b - a) + (c - b) + (d - c) + (d - c)
-        local total = e - a
+        if (not hasIconFootprint) and not (a < b and b < c and c < d and d < g) then
+            return nil, "runtime scratch addresses must be strictly ascending (front < back < pal < shiny < end)"
+        end
+        local maxIconData = hasIconFootprint and (f - e) or 0
+        local maxFootprintData = hasIconFootprint and (g - f) or 0
+        local maxShinyPalLz = hasIconFootprint and (e - d) or (g - d)
+        local perSpeciesStride = (b - a) + (c - b) + (d - c) + (e - d) + maxIconData + maxFootprintData
+        local total = g - a
         local speciesSlots = 1
         if perSpeciesStride > 0 and total >= perSpeciesStride then
             speciesSlots = math.floor(total / perSpeciesStride)
@@ -99,15 +110,19 @@ return function(deps)
         end
         return {
             scratchBase = a,
-            scratchEndExclusive = e,
+            scratchEndExclusive = g,
             frontAddr = a,
             backAddr = b,
             palAddr = c,
             shinyPalAddr = d,
+            iconAddr = hasIconFootprint and e or 0,
+            footprintAddr = hasIconFootprint and f or 0,
             maxFrontLz = b - a,
             maxBackLz = c - b,
             maxPalLz = d - c,
-            maxShinyPalLz = e - d,
+            maxShinyPalLz = maxShinyPalLz,
+            maxIconData = maxIconData,
+            maxFootprintData = maxFootprintData,
             perSpeciesStride = perSpeciesStride,
             speciesSlots = speciesSlots,
         }
@@ -130,16 +145,30 @@ return function(deps)
         local back = base + layout.maxFrontLz
         local pal = back + layout.maxBackLz
         local shiny = pal + layout.maxPalLz
+        local icon = 0
+        local footprint = 0
+        if layout.maxIconData > 0 then
+            icon = shiny + layout.maxShinyPalLz
+            footprint = icon + layout.maxIconData
+        end
         return {
             front = front,
             back = back,
             pal = pal,
             shiny = shiny,
+            icon = icon,
+            footprint = footprint,
             maxFrontLz = layout.maxFrontLz,
             maxBackLz = layout.maxBackLz,
             maxPalLz = layout.maxPalLz,
-            maxShinyPalLz = layout.maxPalLz,
+            maxShinyPalLz = layout.maxShinyPalLz,
+            maxIconData = layout.maxIconData,
+            maxFootprintData = layout.maxFootprintData,
         }, nil
+    end
+
+    function M.getRuntimeScratchAddressesForSpecies(mb, speciesId)
+        return runtimeLzAddressesForSpecies(mb, speciesId)
     end
 
     local function parseManifestText(txt)

@@ -2,6 +2,7 @@
 #include "reserved_species.h"
 #include "pokemon.h"
 #include "data.h" // gMonShinyPaletteTable
+#include "pokemon_icon.h"
 #include "constants/reserved_species_config.h"
 #include "constants/pokedex.h"
 
@@ -17,7 +18,9 @@ ALIGNED(4) const u16 gReservedRuntimeLevelUpLearnsets[NUM_RESERVED_CUSTOM_SPECIE
 // Emulator/runtime scripting may overwrite these ROM bytes (not possible on a real cartridge).
 ALIGNED(4) const u8 gReservedRuntimeRomLzScratch[RESERVED_RUNTIME_ROM_SCRATCH_SIZE] = {0};
 
-STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 104, ReservedSpeciesMailboxLayout);
+extern const u8 *const gMonFootprintTable[];
+
+STATIC_ASSERT(sizeof(struct ReservedSpeciesScriptMailbox) == 120, ReservedSpeciesMailboxLayout);
 STATIC_ASSERT(sizeof(struct NewPokemonInfo) == 132, NewPokemonInfoLayout);
 STATIC_ASSERT(sizeof(struct NewPokemonPendingSlot) == 8, NewPokemonPendingSlotLayout);
 
@@ -80,7 +83,7 @@ void ReservedSpecies_InitScriptMailbox(void)
     const u16 target = SPECIES_CHIMECHO + 1;
 
     gReservedSpeciesScriptMailbox.magic = RESERVED_SPECIES_MAILBOX_MAGIC;
-    gReservedSpeciesScriptMailbox.version = 6;
+    gReservedSpeciesScriptMailbox.version = 7;
     gReservedSpeciesScriptMailbox.count = NUM_RESERVED_CUSTOM_SPECIES;
     gReservedSpeciesScriptMailbox.speciesInfo = (u32)gSpeciesInfo;
     gReservedSpeciesScriptMailbox.levelUpLearnsets = (u32)gLevelUpLearnsets;
@@ -101,6 +104,8 @@ void ReservedSpecies_InitScriptMailbox(void)
     gReservedSpeciesScriptMailbox.reservedLearnsetData = (u32)&gReservedRuntimeLevelUpLearnsets[0][0];
     gReservedSpeciesScriptMailbox.reservedLearnsetStride = sizeof(gReservedRuntimeLevelUpLearnsets[0]);
     gReservedSpeciesScriptMailbox.reservedLearnsetMaxEntries = MAX_LEVEL_UP_MOVES + 1;
+    gReservedSpeciesScriptMailbox.monIconTable = (u32)gMonIconTable;
+    gReservedSpeciesScriptMailbox.monFootprintTable = (u32)gMonFootprintTable;
     {
         const u32 romScratch = (u32)gReservedRuntimeRomLzScratch;
 
@@ -109,6 +114,10 @@ void ReservedSpecies_InitScriptMailbox(void)
         gReservedSpeciesScriptMailbox.runtimePalLzAddr = romScratch + RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP;
         gReservedSpeciesScriptMailbox.runtimeShinyPalLzAddr =
             romScratch + RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP;
+        gReservedSpeciesScriptMailbox.runtimeIconAddr =
+            romScratch + RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP;
+        gReservedSpeciesScriptMailbox.runtimeFootprintAddr =
+            gReservedSpeciesScriptMailbox.runtimeIconAddr + RESERVED_RUNTIME_ICON_DATA_CAP;
         gReservedSpeciesScriptMailbox.runtimeRomScratchEndExclusive = romScratch + RESERVED_RUNTIME_ROM_SCRATCH_SIZE;
     }
     gReservedSpeciesScriptMailbox.newPokemonInfo = (u32)&gNewPokemonInfo;

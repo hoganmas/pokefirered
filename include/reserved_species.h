@@ -9,8 +9,10 @@
 #define RESERVED_RUNTIME_FRONT_LZ_CAP 0x3000u
 #define RESERVED_RUNTIME_BACK_LZ_CAP 0x3000u
 #define RESERVED_RUNTIME_PAL_LZ_CAP 0x200u
+#define RESERVED_RUNTIME_ICON_DATA_CAP 0x400u
+#define RESERVED_RUNTIME_FOOTPRINT_DATA_CAP 0x80u
 #define RESERVED_RUNTIME_ROM_SCRATCH_PER_SPECIES \
-    (RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP)
+    (RESERVED_RUNTIME_FRONT_LZ_CAP + RESERVED_RUNTIME_BACK_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_PAL_LZ_CAP + RESERVED_RUNTIME_ICON_DATA_CAP + RESERVED_RUNTIME_FOOTPRINT_DATA_CAP)
 #define RESERVED_RUNTIME_ROM_SCRATCH_SIZE \
     (RESERVED_RUNTIME_ROM_SCRATCH_PER_SPECIES * NUM_RESERVED_CUSTOM_SPECIES)
 
@@ -52,7 +54,7 @@ struct NewPokemonPendingSlot
 struct ReservedSpeciesScriptMailbox
 {
     u32 magic; // RESERVED_SPECIES_MAILBOX_MAGIC
-    u16 version; // 6: adds newPokemonInfo + newPokemonPendingSlots pointers (EWRAM)
+    u16 version; // 7: adds icon/footprint table + runtime scratch pointers
     u16 count; // mirrors NUM_RESERVED_CUSTOM_SPECIES
     u32 speciesInfo;           // &gSpeciesInfo[0]
     u32 levelUpLearnsets;      // &gLevelUpLearnsets[0]
@@ -77,6 +79,10 @@ struct ReservedSpeciesScriptMailbox
     u32 reservedLearnsetData;  // &gReservedRuntimeLevelUpLearnsets[0][0] (ROM scratch)
     u16 reservedLearnsetStride; // bytes between slot rows in learnset buffer
     u16 reservedLearnsetMaxEntries; // u16 entries per slot row (includes LEVEL_UP_END terminator slot)
+    u32 monIconTable;         // &gMonIconTable[0] (const u8 *const[])
+    u32 monFootprintTable;    // &gMonFootprintTable[0] (const u8 *const[])
+    u32 runtimeIconAddr;      // ROM scratch: uncompressed icon tiles (4bpp, 32 tiles)
+    u32 runtimeFootprintAddr; // ROM scratch: uncompressed footprint tiles (1bpp, 4 tiles)
     // One-past-end bus address for gReservedRuntimeRomLzScratch[] (Lua derives per-slot LZ max from gaps).
     u32 runtimeRomScratchEndExclusive;
     u32 newPokemonInfo;         // &gNewPokemonInfo (EWRAM)

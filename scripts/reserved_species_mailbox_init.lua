@@ -85,5 +85,7 @@ return function(M, _dbg)
         nextReservedSpeciesIdAfter = _psAlloc.nextReservedSpeciesIdAfter,
         jsonEscapeForBridge = _http.jsonEscapeForBridge,
         pokegenHttpPostCurl = _http.pokegenHttpPostCurl,
+        pokegenHttpGetCurl = _http.pokegenHttpGetCurl,
+        parsePokegenPayloadResponse = _http.parsePokegenPayloadResponse,
     }
 end

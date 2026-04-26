@@ -10,15 +10,6 @@ return function(M)
         return s
     end
 
-    local function parsePokegenJsonResponse(s)
-        if not s or s == "" then
-            return nil, 0
-        end
-        local st = s:match('"status"%s*:%s*"(%a+)"')
-        local rs = s:match('"result_species"%s*:%s*(%d+)')
-        return st, tonumber(rs or 0)
-    end
-
     local function jsonUnescapeFromBridge(s)
         if not s then
             return nil
@@ -29,6 +20,17 @@ return function(M)
         s = s:gsub('\\"', '"')
         s = s:gsub("\\\\", "\\")
         return s
+    end
+
+    local function parsePokegenJsonResponse(s)
+        if not s or s == "" then
+            return nil, 0, nil
+        end
+        local st = s:match('"status"%s*:%s*"(%a+)"')
+        local rs = s:match('"result_species"%s*:%s*(%d+)')
+        local detail = s:match('"detail"%s*:%s*"(.-)"')
+        detail = jsonUnescapeFromBridge(detail)
+        return st, tonumber(rs or 0), detail
     end
 
     local function shellSingleQuote(s)
@@ -111,8 +113,12 @@ return function(M)
                 err
                     or "empty response (install curl; check POKEGEN_HTTP_URL). If mGBA blocks subprocesses, use a build that allows os.execute."
         end
-        local st, rs = parsePokegenJsonResponse(resp)
-        return true, st, rs, nil
+        local st, rs, detail = parsePokegenJsonResponse(resp)
+        local errMsg = detail
+        if (not errMsg or errMsg == "") and not st then
+            errMsg = "unexpected response: " .. tostring(resp):sub(1, 200)
+        end
+        return true, st, rs, errMsg
     end
 
     local function pokegenHttpGetCurl(url)

@@ -885,6 +885,7 @@ function M.startPromptStonePendingPoll()
                                         .. tostring(st)
                                         .. " result_species="
                                         .. tostring(species)
+                                        .. (httpErr and (" detail=" .. tostring(httpErr)) or "")
                                 )
                             end
                         end

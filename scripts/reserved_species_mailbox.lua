@@ -89,8 +89,11 @@ M.PROMPT_STONE_RS_SPRITE_PICK_TRIES = 48
 -- Pokegen HTTP: mGBA Lua POSTs to pokegen-server via host `curl` (blocking; requires curl + io.popen or os.execute).
 -- If result_species equals the party mon's species, Lua bumps to the next id in the reserved species window so evolution + ROM patches use a new row (repeat Prompt Stone on same mon).
 M.POKEGEN_BRIDGE_ENABLED = true
-M.POKEGEN_HTTP_URL = "http://127.0.0.1:8766/v1/generate"
+M.POKEGEN_HTTP_URL = "http://127.0.0.1:8765/v1/generate"
+M.POKEGEN_HTTP_FALLBACK_ENABLED = true
+M.POKEGEN_HTTP_FALLBACK_URL = "http://127.0.0.1:8765/v1/generate"
 M.POKEGEN_HTTP_MAX_TIME_SEC = 30
+M.POKEGEN_TOKEN_ENV = "POKEGEN_TOKEN"
 M.POKEGEN_PAYLOAD_FETCH_ENABLED = true
 M.POKEGEN_PAYLOAD_URL_TEMPLATE = "" -- Optional; include {request_id}. Default derives from POKEGEN_HTTP_URL.
 M.POKEGEN_HTTP_ASSET_MAX_TIME_SEC = 30
@@ -265,6 +268,26 @@ local function fetchPokegenPayloadForRequest(generateUrl, requestId)
         return nil, "payload parse failed"
     end
     return parsed, nil
+end
+
+local function postPokegenWithOptionalFallback(primaryUrl, jsonBody)
+    local pc, okHttp, st, species, httpErr = pcall(pokegenHttpPostCurl, primaryUrl, jsonBody, nil)
+    if pc and okHttp and st == "done" and species ~= nil and species ~= 0 then
+        return pc, okHttp, st, species, httpErr, primaryUrl, false
+    end
+    if M.POKEGEN_HTTP_FALLBACK_ENABLED ~= true then
+        return pc, okHttp, st, species, httpErr, primaryUrl, false
+    end
+    local fallbackUrl = tostring(M.POKEGEN_HTTP_FALLBACK_URL or "")
+    if fallbackUrl == "" or fallbackUrl == primaryUrl then
+        return pc, okHttp, st, species, httpErr, primaryUrl, false
+    end
+    local pc2, ok2, st2, sp2, err2 = pcall(pokegenHttpPostCurl, fallbackUrl, jsonBody, nil)
+    if pc2 and ok2 and st2 == "done" and sp2 ~= nil and sp2 ~= 0 then
+        return pc2, ok2, st2, sp2, err2, fallbackUrl, true
+    end
+    local mergedErr = err2 or httpErr
+    return pc2, ok2, st2, sp2, mergedErr, fallbackUrl, true
 end
 
 --- Clone/sprites/name/resultSpecies/DONE + logs (shared by auto-stub and pokegen HTTP).
@@ -782,7 +805,12 @@ function M.startPromptStonePendingPoll()
                             jsonEscapeForBridge(promptText)
                         )
                         local url = M.POKEGEN_HTTP_URL or "http://127.0.0.1:8765/v1/generate"
-                        local pc, okHttp, st, species, httpErr = pcall(pokegenHttpPostCurl, url, body)
+                        local pc, okHttp, st, species, httpErr, usedUrl, usedFallback = postPokegenWithOptionalFallback(url, body)
+                        if usedFallback and console and console.log then
+                            console:log(
+                                "[ReservedSpeciesMailbox] pokegen: primary URL failed; used fallback URL " .. tostring(usedUrl)
+                            )
+                        end
                         if not pc then
                             w8(emu, row + M.OFFSET_NPP_STATUS, M.NEW_POKEMON_REQ_FAILED)
                             if console and console.log then
@@ -844,7 +872,7 @@ function M.startPromptStonePendingPoll()
                                     rsLog = targetSpecies - mb.targetSpecies
                                 end
                                 local enrich = nil
-                                local payload, payloadErr = fetchPokegenPayloadForRequest(url, rid)
+                                local payload, payloadErr = fetchPokegenPayloadForRequest(usedUrl or url, rid)
                                 if payload then
                                     enrich = payload
                                     if console and console.log then

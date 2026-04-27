@@ -37,6 +37,20 @@ return function(M)
         return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
     end
 
+    local function resolveAuthToken(opts)
+        if opts and opts.authToken and tostring(opts.authToken) ~= "" then
+            return tostring(opts.authToken)
+        end
+        local envName = tostring(M.POKEGEN_TOKEN_ENV or "POKEGEN_TOKEN")
+        if os and os.getenv and envName ~= "" then
+            local v = os.getenv(envName)
+            if v and tostring(v) ~= "" then
+                return tostring(v)
+            end
+        end
+        return nil
+    end
+
     local function runHostCurlCommand(cmd)
         local maxSec = M.POKEGEN_HTTP_MAX_TIME_SEC or 30
         local resp = nil
@@ -82,7 +96,7 @@ return function(M)
 
     -- POST JSON to pokegen-server via host curl (blocking). Requires curl on PATH.
     -- mGBA may define io.popen but throw "'popen' not supported" — use pcall and fall back to os.execute.
-    local function pokegenHttpPostCurl(url, jsonBody)
+    local function pokegenHttpPostCurl(url, jsonBody, opts)
         local maxSec = M.POKEGEN_HTTP_MAX_TIME_SEC or 30
         local tmp = os.tmpname()
         if not tmp then
@@ -97,10 +111,16 @@ return function(M)
         -- -d @file avoids shell-escaping the JSON body; quote URL and path for sh.
         local qtmp = shellSingleQuote(tmp)
         local qurl = shellSingleQuote(url)
+        local authToken = resolveAuthToken(opts)
+        local authHeader = ""
+        if authToken and authToken ~= "" then
+            authHeader = " -H " .. shellSingleQuote("Authorization: Bearer " .. authToken)
+        end
         local cmd = string.format(
-            "curl -sS --max-time %d -X POST -H %s -d @%s %s",
+            "curl -sS --max-time %d -X POST -H %s%s -d @%s %s",
             maxSec,
             shellSingleQuote("Content-Type: application/json"),
+            authHeader,
             qtmp,
             qurl
         )
